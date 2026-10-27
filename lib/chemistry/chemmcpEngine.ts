@@ -616,6 +616,92 @@ export function predictReaction(reactants: string[]): PredictedReactionOutcome {
     };
   }
 
+  // 13. Carbonate Acid Effervescence: 2HCl + Na2CO3 -> 2NaCl + H2O + CO2(g)
+  if (
+    (norm.includes('HCl') || norm.some((r) => r.includes('Hydrochloric'))) &&
+    (norm.includes('Na2CO3') || norm.some((r) => r.includes('Carbonate')))
+  ) {
+    return {
+      equation: '2HCl(aq) + Na₂CO₃(aq) → 2NaCl(aq) + H₂O(l) + CO₂(g)↑',
+      reactionType: 'gas-evolution',
+      products: [
+        { formula: 'NaCl', name: 'Sodium Chloride', state: 'aq', color: '#e0f2fe' },
+        { formula: 'CO2', name: 'Carbon Dioxide Gas', state: 'g', color: '#ffffff' },
+      ],
+      deltaH: -28.4,
+      tempChangeExpected: 1.5,
+      visualObservation: 'Rapid effervescence! Dense streams of colorless, odorless Carbon Dioxide gas bubbles CO₂(g) vigorously evolve.',
+      isGasEvolving: true,
+      gasType: 'CO2',
+      isPrecipitateForming: false,
+      targetPH: 6.2,
+    };
+  }
+
+  // 14. Ammonium Salt + Base: NH4Cl + NaOH -> NaCl + H2O + NH3(g)
+  if (
+    (norm.includes('NH4Cl') || norm.some((r) => r.includes('Ammonium'))) &&
+    (norm.includes('NaOH') || norm.some((r) => r.includes('Sodium Hydroxide')))
+  ) {
+    return {
+      equation: 'NH₄Cl(aq) + NaOH(aq) → NaCl(aq) + H₂O(l) + NH₃(g)↑',
+      reactionType: 'gas-evolution',
+      products: [
+        { formula: 'NaCl', name: 'Sodium Chloride', state: 'aq', color: '#e0f2fe' },
+        { formula: 'NH3', name: 'Ammonia Gas', state: 'g', color: '#ffffff' },
+      ],
+      deltaH: -4.2,
+      tempChangeExpected: 0.5,
+      visualObservation: 'Evolution of pungent, alkaline Ammonia gas NH₃(g). Gas turns moist red litmus paper to deep blue.',
+      isGasEvolving: true,
+      gasType: 'NH3',
+      isPrecipitateForming: false,
+      targetPH: 10.5,
+    };
+  }
+
+  // 15. Copper Ammonia Complexation: CuSO4 + 4NH3 -> [Cu(NH3)4]SO4
+  if (
+    (norm.includes('CuSO4') || norm.some((r) => r.includes('Copper'))) &&
+    (norm.includes('NH3') || norm.some((r) => r.includes('Ammonia')))
+  ) {
+    return {
+      equation: 'Cu²⁺(aq) + 4NH₃(aq) ⇌ [Cu(NH₃)₄]²⁺(aq) (Tetraamminecopper(II))',
+      reactionType: 'complexation',
+      products: [
+        { formula: '[Cu(NH3)4]2+', name: 'Tetraamminecopper(II) Complex', state: 'aq', color: '#1e3a8a' },
+      ],
+      deltaH: -89.0,
+      tempChangeExpected: 2.1,
+      visualObservation: 'Spectacular deep royal azure-blue color change as ammonia coordinates with Cu²⁺ to form [Cu(NH₃)₄]²⁺.',
+      isGasEvolving: false,
+      isPrecipitateForming: false,
+      targetPH: 9.8,
+    };
+  }
+
+  // 16. Calcium Chloride + Sodium Carbonate -> CaCO3(s) (Chalk White Precipitate)
+  if (
+    (norm.includes('CaCl2') || norm.some((r) => r.includes('Calcium'))) &&
+    (norm.includes('Na2CO3') || norm.some((r) => r.includes('Sodium Carbonate')))
+  ) {
+    return {
+      equation: 'CaCl₂(aq) + Na₂CO₃(aq) → CaCO₃(s)↓ + 2NaCl(aq)',
+      reactionType: 'precipitation',
+      products: [
+        { formula: 'CaCO3', name: 'Calcium Carbonate', state: 's', color: '#f8fafc', precipitateColor: '#ffffff' },
+        { formula: 'NaCl', name: 'Sodium Chloride', state: 'aq', color: '#e0f2fe' },
+      ],
+      deltaH: -12.5,
+      tempChangeExpected: 0.4,
+      visualObservation: 'Instant formation of a bright white chalky precipitate of Calcium Carbonate CaCO₃(s).',
+      isGasEvolving: false,
+      isPrecipitateForming: true,
+      precipitateColor: '#ffffff',
+      targetPH: 8.5,
+    };
+  }
+
   // Default No Reaction
   return {
     equation: `${reactants.join(' + ')} → Homogeneous Mixture (No chemical reaction)`,

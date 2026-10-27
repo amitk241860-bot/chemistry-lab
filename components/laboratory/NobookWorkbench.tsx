@@ -9,6 +9,7 @@ import { SolutionInfoPanel, type SelectedVesselData } from './SolutionInfoPanel'
 import { TransferModal } from './TransferModal';
 import { ProcedurePanel } from './ProcedurePanel';
 import { AiWorkbenchAssistant } from './AiWorkbenchAssistant';
+import { AiWorkbenchOverlay } from './AiWorkbenchOverlay';
 import {
   SparklesIcon,
   RotateCcwIcon,
@@ -1529,6 +1530,20 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
           </div>
         )}
 
+        {/* Real-time AI Chemical Mix Radar & Burner Thermal Dynamics (Strictly in Custom Experiments) */}
+        {isCustomExperiment && (
+          <AiWorkbenchOverlay
+            items={items}
+            selectedId={selectedId}
+            onSelectVessel={(id) => setSelectedId(id)}
+            onToggleBurner={handleToggleBurner}
+            onExecuteMix={(srcId, destId) => {
+              setTransferState({ isOpen: true, sourceId: srcId, destId });
+            }}
+            onOpenFullAssistant={() => setIsAiAssistantOpen(true)}
+          />
+        )}
+
         {/* Interactive Apparatus Items on the Workbench - Center Spaced & Free to Move */}
         {items.map((item) => {
           const isSelected = item.id === selectedId;
@@ -1723,6 +1738,116 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
           onToggle={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
         />
       )}
+
+      {/* Mobile Workbench Thumb Toolbar (Visible ONLY on mobile devices: md:hidden) */}
+      <div className="md:hidden shrink-0 h-14 bg-slate-950/95 border-t border-cyan-500/25 backdrop-blur-xl px-2 flex items-center justify-around z-30 select-none pb-[max(0.4rem,env(safe-area-inset-bottom,4px))]">
+        {/* 1. Stockroom */}
+        <button
+          onClick={() => {
+            if (soundEnabled) playGlassClink();
+            setIsStockroomOpen(!isStockroomOpen);
+            setIsProcedureOpen(false);
+          }}
+          className={`flex flex-col items-center justify-center min-w-[48px] py-1 rounded-xl transition-all active:scale-95 ${
+            isStockroomOpen ? 'text-cyan-400 font-bold bg-cyan-500/20' : 'text-slate-400 hover:text-white'
+          }`}
+          title="Stockroom"
+        >
+          <BeakerIcon className="w-4 h-4" />
+          <span className="text-[9px] mt-0.5 font-medium">Stockroom</span>
+        </button>
+
+        {/* 2. Solution Info & Reactions */}
+        <button
+          onClick={() => setIsInfoPanelOpen(!isInfoPanelOpen)}
+          className={`flex flex-col items-center justify-center min-w-[48px] py-1 rounded-xl transition-all active:scale-95 ${
+            isInfoPanelOpen ? 'text-cyan-300 font-bold bg-cyan-500/20' : 'text-slate-400 hover:text-white'
+          }`}
+          title="Solution Info"
+        >
+          <DropletsIcon className="w-4 h-4 text-cyan-400" />
+          <span className="text-[9px] mt-0.5 font-medium">Info</span>
+        </button>
+
+        {/* 3. Burner Quick Flame Toggle */}
+        {(() => {
+          const burner = items.find((i) => i.type === 'burner');
+          return (
+            <button
+              onClick={() => {
+                if (burner) handleToggleBurner(burner.id);
+              }}
+              className={`flex flex-col items-center justify-center min-w-[48px] py-1 rounded-xl transition-all active:scale-95 ${
+                burner?.isHeating
+                  ? 'text-rose-400 font-bold bg-rose-500/20 shadow-[0_0_12px_rgba(244,63,94,0.4)]'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Toggle Flame"
+            >
+              <FlameIcon className="w-4 h-4 text-rose-400" />
+              <span className="text-[9px] mt-0.5 font-medium">
+                {burner?.isHeating ? 'Extinguish' : 'Flame'}
+              </span>
+            </button>
+          );
+        })()}
+
+        {/* 4. AI Co-Pilot (Strictly Custom Experiments Only) */}
+        {isCustomExperiment && (
+          <button
+            onClick={() => {
+              if (soundEnabled) playStepChime();
+              setIsAiAssistantOpen(!isAiAssistantOpen);
+            }}
+            className={`flex flex-col items-center justify-center min-w-[48px] py-1 rounded-xl transition-all active:scale-95 ${
+              isAiAssistantOpen ? 'text-violet-300 font-bold bg-violet-500/20' : 'text-violet-400 hover:text-white'
+            }`}
+            title="AI Lab Co-Pilot"
+          >
+            <SparklesIcon className="w-4 h-4 text-cyan-300" />
+            <span className="text-[9px] mt-0.5 font-medium">AI Co-Pilot</span>
+          </button>
+        )}
+
+        {/* 5. Guide */}
+        <button
+          onClick={() => {
+            setIsProcedureOpen(!isProcedureOpen);
+            setIsStockroomOpen(false);
+          }}
+          className={`flex flex-col items-center justify-center min-w-[48px] py-1 rounded-xl transition-all active:scale-95 ${
+            isProcedureOpen ? 'text-cyan-400 font-bold bg-cyan-500/20' : 'text-slate-400 hover:text-white'
+          }`}
+          title="Procedure Guide"
+        >
+          <BookOpenIcon className="w-4 h-4" />
+          <span className="text-[9px] mt-0.5 font-medium">Guide</span>
+        </button>
+
+        {/* 6. Sound Toggle */}
+        <button
+          onClick={() => setSoundEnabled(!soundEnabled)}
+          className="flex flex-col items-center justify-center min-w-[42px] py-1 rounded-xl text-slate-400 hover:text-white active:scale-95"
+          title="Toggle Laboratory Sound"
+        >
+          {soundEnabled ? (
+            <Volume2Icon className="w-4 h-4 text-cyan-400" />
+          ) : (
+            <VolumeXIcon className="w-4 h-4 text-slate-500" />
+          )}
+          <span className="text-[9px] mt-0.5 font-medium">{soundEnabled ? 'Sound' : 'Muted'}</span>
+        </button>
+
+        {/* 7. Exit */}
+        <Link
+          href="/"
+          className="flex flex-col items-center justify-center min-w-[42px] py-1 rounded-xl text-slate-400 hover:text-white active:scale-95"
+          title="Return to Labs"
+        >
+          <ChevronLeftIcon className="w-4 h-4" />
+          <span className="text-[9px] mt-0.5 font-medium">Exit</span>
+        </Link>
+      </div>
     </div>
   );
 };
