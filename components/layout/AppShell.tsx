@@ -4,6 +4,7 @@ import React, { Suspense } from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { MobileNav } from './MobileNav';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -21,9 +22,9 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       <div className="fixed top-0 left-64 w-[500px] h-[500px] bg-cyan-600/10 rounded-full blur-[140px] pointer-events-none -z-10" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-blue-600/10 rounded-full blur-[160px] pointer-events-none -z-10" />
 
-      {/* Main Sidebar (Hidden on interactive workbench pages to give 100% full space to reaction sheet) */}
+      {/* Main Sidebar (Desktop only; hidden on mobile & hidden on workbench pages) */}
       {!isWorkbench && (
-        <Suspense fallback={<div className="w-64 bg-slate-950/80 border-r border-white/5" />}>
+        <Suspense fallback={<div className="hidden md:block w-64 bg-slate-950/80 border-r border-white/5" />}>
           <Sidebar />
         </Suspense>
       )}
@@ -39,12 +40,15 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
           className={
             isWorkbench
               ? 'flex-1 w-full h-screen p-0 m-0 overflow-hidden relative'
-              : 'flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto'
+              : 'flex-1 p-4 sm:p-6 md:p-8 pb-24 md:pb-8 max-w-7xl w-full mx-auto'
           }
         >
           {children}
         </main>
       </div>
+
+      {/* Ergonomic Mobile Navigation Bar */}
+      {!isWorkbench && <MobileNav />}
     </div>
   );
 };

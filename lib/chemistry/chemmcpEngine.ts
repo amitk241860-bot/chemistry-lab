@@ -485,6 +485,137 @@ export function predictReaction(reactants: string[]): PredictedReactionOutcome {
     };
   }
 
+  // 7. Copper(II) Sulfate + Sodium Hydroxide -> Cu(OH)2(s) (Pale Blue Gelatinous Precipitate)
+  if (
+    (norm.includes('CuSO4') || norm.some((r) => r.includes('Copper'))) &&
+    (norm.includes('NaOH') || norm.some((r) => r.includes('Sodium Hydroxide')))
+  ) {
+    return {
+      equation: 'CuSO₄(aq) + 2NaOH(aq) → Cu(OH)₂(s)↓ + Na₂SO₄(aq)',
+      reactionType: 'precipitation',
+      products: [
+        { formula: 'Cu(OH)2', name: 'Copper(II) Hydroxide', state: 's', color: '#0284c7', precipitateColor: '#38bdf8' },
+        { formula: 'Na2SO4', name: 'Sodium Sulfate', state: 'aq', color: '#f0f9ff' },
+      ],
+      deltaH: -54.2,
+      tempChangeExpected: 1.2,
+      visualObservation: 'Instant formation of a thick, light sky-blue gelatinous precipitate of Copper(II) Hydroxide Cu(OH)₂(s).',
+      isGasEvolving: false,
+      isPrecipitateForming: true,
+      precipitateColor: '#38bdf8',
+      targetPH: 9.5,
+    };
+  }
+
+  // 8. Iron(III) Chloride + Sodium Hydroxide -> Fe(OH)3(s) (Reddish-Brown Precipitate)
+  if (
+    (norm.includes('FeCl3') || norm.some((r) => r.includes('Iron(III)'))) &&
+    (norm.includes('NaOH') || norm.some((r) => r.includes('Sodium Hydroxide')))
+  ) {
+    return {
+      equation: 'FeCl₃(aq) + 3NaOH(aq) → Fe(OH)₃(s)↓ + 3NaCl(aq)',
+      reactionType: 'precipitation',
+      products: [
+        { formula: 'Fe(OH)3', name: 'Iron(III) Hydroxide', state: 's', color: '#7c2d12', precipitateColor: '#9a3412' },
+        { formula: 'NaCl', name: 'Sodium Chloride', state: 'aq', color: '#e0f2fe' },
+      ],
+      deltaH: -88.4,
+      tempChangeExpected: 1.8,
+      visualObservation: 'Rapid precipitation of a flocculent reddish-brown rust precipitate of Iron(III) Hydroxide Fe(OH)₃(s).',
+      isGasEvolving: false,
+      isPrecipitateForming: true,
+      precipitateColor: '#9a3412',
+      targetPH: 9.0,
+    };
+  }
+
+  // 9. Iron(II) Sulfate + Sodium Hydroxide -> Fe(OH)2(s) (Dirty Green Precipitate)
+  if (
+    (norm.includes('FeSO4') || norm.some((r) => r.includes('Iron(II)'))) &&
+    (norm.includes('NaOH') || norm.some((r) => r.includes('Sodium Hydroxide')))
+  ) {
+    return {
+      equation: 'FeSO₄(aq) + 2NaOH(aq) → Fe(OH)₂(s)↓ + Na₂SO₄(aq)',
+      reactionType: 'precipitation',
+      products: [
+        { formula: 'Fe(OH)2', name: 'Iron(II) Hydroxide', state: 's', color: '#166534', precipitateColor: '#15803d' },
+        { formula: 'Na2SO4', name: 'Sodium Sulfate', state: 'aq', color: '#f0f9ff' },
+      ],
+      deltaH: -47.1,
+      tempChangeExpected: 1.0,
+      visualObservation: 'Formation of a characteristic gelatinous dirty-green precipitate of Iron(II) Hydroxide Fe(OH)₂(s).',
+      isGasEvolving: false,
+      isPrecipitateForming: true,
+      precipitateColor: '#15803d',
+      targetPH: 9.2,
+    };
+  }
+
+  // 10. Silver Nitrate + Potassium Iodide -> AgI(s) (Pale Yellow Precipitate)
+  if (
+    (norm.includes('AgNO3') || norm.some((r) => r.includes('Silver'))) &&
+    (norm.includes('KI') || norm.some((r) => r.includes('Potassium Iodide')))
+  ) {
+    return {
+      equation: 'AgNO₃(aq) + KI(aq) → AgI(s)↓ + KNO₃(aq)',
+      reactionType: 'precipitation',
+      products: [
+        { formula: 'AgI', name: 'Silver Iodide', state: 's', color: '#fef08a', precipitateColor: '#fde047' },
+        { formula: 'KNO3', name: 'Potassium Nitrate', state: 'aq', color: '#f8fafc' },
+      ],
+      deltaH: -112.5,
+      tempChangeExpected: 1.4,
+      visualObservation: 'Instant formation of a bright canary pale-yellow curdy precipitate of insoluble Silver Iodide AgI(s).',
+      isGasEvolving: false,
+      isPrecipitateForming: true,
+      precipitateColor: '#fde047',
+      targetPH: 6.8,
+    };
+  }
+
+  // 11. Sulfuric Acid + Sodium Hydroxide -> Na2SO4 + 2H2O (Neutralization)
+  if (
+    (norm.includes('H2SO4') || norm.some((r) => r.includes('Sulfuric'))) &&
+    (norm.includes('NaOH') || norm.some((r) => r.includes('Sodium Hydroxide')))
+  ) {
+    return {
+      equation: 'H₂SO₄(aq) + 2NaOH(aq) → Na₂SO₄(aq) + 2H₂O(l) + Heat',
+      reactionType: 'neutralization',
+      products: [
+        { formula: 'Na2SO4', name: 'Sodium Sulfate', state: 'aq', color: '#38bdf8' },
+        { formula: 'H2O', name: 'Water', state: 'l', color: '#38bdf8' },
+      ],
+      deltaH: -114.6,
+      tempChangeExpected: 8.5,
+      visualObservation: 'Strong exothermic neutralization! Vessel becomes very warm (~+8.5°C rise). Neutralization reaches pH 7.0.',
+      isGasEvolving: false,
+      isPrecipitateForming: false,
+      targetPH: 7.0,
+    };
+  }
+
+  // 12. Single Displacement: Iron + Copper(II) Sulfate -> FeSO4 + Cu(s)
+  if (
+    (norm.includes('Fe') || norm.some((r) => r.includes('Iron'))) &&
+    (norm.includes('CuSO4') || norm.some((r) => r.includes('Copper')))
+  ) {
+    return {
+      equation: 'Fe(s) + CuSO₄(aq) → FeSO₄(aq) + Cu(s)↓',
+      reactionType: 'redox',
+      products: [
+        { formula: 'FeSO4', name: 'Iron(II) Sulfate', state: 'aq', color: '#86efac' },
+        { formula: 'Cu', name: 'Copper Metal Deposit', state: 's', color: '#b45309', precipitateColor: '#b45309' },
+      ],
+      deltaH: -152.0,
+      tempChangeExpected: 3.2,
+      visualObservation: 'Single displacement: Blue solution fades to pale green FeSO₄ as shiny reddish-brown elemental copper deposits coat the metal.',
+      isGasEvolving: false,
+      isPrecipitateForming: true,
+      precipitateColor: '#b45309',
+      targetPH: 5.5,
+    };
+  }
+
   // Default No Reaction
   return {
     equation: `${reactants.join(' + ')} → Homogeneous Mixture (No chemical reaction)`,

@@ -40,7 +40,7 @@ export const Sidebar: React.FC = () => {
   ];
 
   return (
-    <aside className="w-64 shrink-0 bg-slate-950/80 border-r border-cyan-500/15 backdrop-blur-2xl flex flex-col h-screen sticky top-0 z-40 select-none">
+    <aside className="hidden md:flex w-64 shrink-0 bg-slate-950/80 border-r border-cyan-500/15 backdrop-blur-2xl flex-col h-screen sticky top-0 z-40 select-none">
       {/* Brand Header */}
       <div className="p-5 border-b border-white/5">
         <AppLogo size="md" />

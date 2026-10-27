@@ -94,7 +94,7 @@ RESPOND ONLY WITH VALID STRICT JSON (no markdown formatting, no code fences, no 
   "initialApparatus": [
     {
       "id": "item-1",
-      "name": "Reagent 1 Container (e.g. 0.1M AgNO3)",
+      "name": "0.1M Silver Nitrate (AgNO₃)",
       "type": "beaker-250" | "beaker-100" | "conical-flask-250" | "test-tube" | "cylinder-100" | "evaporating-dish" | "burette-50" | "dropper-pipette" | "glass-rod" | "thermometer" | "burner" | "tripod",
       "x": 160,
       "y": 320,
@@ -107,7 +107,7 @@ RESPOND ONLY WITH VALID STRICT JSON (no markdown formatting, no code fences, no 
     },
     {
       "id": "item-2",
-      "name": "Reagent 2 Container (e.g. 0.1M NaCl)",
+      "name": "0.1M Sodium Chloride (NaCl)",
       "type": "beaker-100",
       "x": 420,
       "y": 320,
@@ -122,13 +122,13 @@ RESPOND ONLY WITH VALID STRICT JSON (no markdown formatting, no code fences, no 
   "milestones": [
     {
       "step": 1,
-      "title": "Mix Reagents",
-      "instruction": "Transfer Reagent 2 into Reagent 1 container.",
+      "title": "Mix Chemical Solutions",
+      "instruction": "Transfer 0.1M Sodium Chloride (NaCl) into 0.1M Silver Nitrate (AgNO₃).",
       "requiredAction": "pour",
       "sourceId": "item-2",
       "targetId": "item-1",
       "minVolume": 20,
-      "successMessage": "Right step! Reagents mixed successfully.",
+      "successMessage": "Right step! Solutions mixed and reaction initiated.",
       "hintMessage": "Use the pour dialog to transfer solutions."
     }
   ],
@@ -147,7 +147,8 @@ RESPOND ONLY WITH VALID STRICT JSON (no markdown formatting, no code fences, no 
 CRITICAL RULES:
 1. Ensure the x and y coordinates are nicely spaced on the canvas (x between 140 and 650, y between 150 and 380) so elements do NOT overlap!
 2. Liquid colors must be authentic hex codes (e.g. Cu2+ is '#0284c7', FeSCN2+ is '#991b1b', PbI2 is '#eab308', neutral water is '#38bdf8').
-3. Milestones must accurately reflect the steps needed to complete the experiment safely.`;
+3. Milestones must accurately reflect the steps needed to complete the experiment safely.
+4. STRICT NAME RULE: In the 'name' field, write the EXACT chemical compound name and concentration (e.g. '0.1M Silver Nitrate (AgNO₃)' or '0.1M Sodium Chloride (NaCl)'). NEVER use placeholder words like 'Reagent Beaker', 'Reaction Beaker', 'Supply Beaker', or 'Reagent 1 Container'!`;
 
         const response = await ai.models.generateContent({
           model: preferredModel,
@@ -216,13 +217,32 @@ function generateDeterministicSetup(guide: string): CustomExperimentSetup {
   const isPrecipitation = prediction.reactionType === 'precipitation';
   const isComplexation = prediction.reactionType === 'complexation';
 
-  const r1Name = reactants[0] || 'Reactant A';
-  const r2Name = reactants[1] || 'Reactant B';
+  const compoundNames: Record<string, string> = {
+    AgNO3: 'Silver Nitrate (AgNO₃)',
+    NaCl: 'Sodium Chloride (NaCl)',
+    BaCl2: 'Barium Chloride (BaCl₂)',
+    Na2SO4: 'Sodium Sulfate (Na₂SO₄)',
+    'Pb(NO3)2': 'Lead(II) Nitrate (Pb(NO₃)₂)',
+    KI: 'Potassium Iodide (KI)',
+    FeCl3: 'Iron(III) Chloride (FeCl₃)',
+    KSCN: 'Potassium Thiocyanate (KSCN)',
+    HCl: 'Hydrochloric Acid (HCl)',
+    NaOH: 'Sodium Hydroxide (NaOH)',
+    Zn: 'Zinc Granules (Zn)',
+    CuSO4: 'Copper(II) Sulfate (CuSO₄)',
+    FeSO4: 'Iron(II) Sulfate (FeSO₄)',
+    KMnO4: 'Potassium Permanganate (KMnO₄)',
+  };
+
+  const r1Key = reactants[0] || 'AgNO3';
+  const r2Key = reactants[1] || 'NaCl';
+  const r1Display = compoundNames[r1Key] || r1Key;
+  const r2Display = compoundNames[r2Key] || r2Key;
 
   const initialApparatus: CustomExperimentSetup['initialApparatus'] = [
     {
       id: 'vessel-1',
-      name: `Reaction Beaker (contains 50 mL 0.1M ${r1Name})`,
+      name: `0.1M ${r1Display}`,
       type: 'beaker-250',
       x: 230,
       y: 320,
@@ -231,11 +251,11 @@ function generateDeterministicSetup(guide: string): CustomExperimentSetup {
       temperature: 25.0,
       liquidColor: isComplexation ? '#fef08a' : '#38bdf8',
       ph: isNeutralization ? 1.0 : 6.8,
-      activeChemicals: [`${r1Name}(aq)`],
+      activeChemicals: [`${r1Key}(aq)`],
     },
     {
       id: 'vessel-2',
-      name: `Supply Beaker (contains 50 mL 0.1M ${r2Name})`,
+      name: `0.1M ${r2Display}`,
       type: 'beaker-100',
       x: 480,
       y: 320,
@@ -244,7 +264,7 @@ function generateDeterministicSetup(guide: string): CustomExperimentSetup {
       temperature: 25.0,
       liquidColor: '#38bdf8',
       ph: isNeutralization ? 13.0 : 7.0,
-      activeChemicals: [`${r2Name}(aq)`],
+      activeChemicals: [`${r2Key}(aq)`],
     },
     {
       id: 'tool-rod',
@@ -264,22 +284,22 @@ function generateDeterministicSetup(guide: string): CustomExperimentSetup {
   const milestones: CustomExperimentSetup['milestones'] = [
     {
       step: 1,
-      title: 'Position Reaction Apparatus',
-      instruction: `Inspect the Reaction Beaker containing ${r1Name} and the Supply Beaker with ${r2Name} on the bench.`,
+      title: 'Position Chemical Solutions',
+      instruction: `Inspect the 0.1M ${r1Display} and 0.1M ${r2Display} on the workbench.`,
       requiredAction: 'observe',
-      successMessage: 'Setup inspected! Reagents ready for reaction.',
+      successMessage: 'Chemical solutions inspected! Ready for chemical reaction.',
       hintMessage: 'Check the liquid volumes and solution properties in the info panel.',
     },
     {
       step: 2,
-      title: `Mix ${r2Name} into ${r1Name}`,
-      instruction: `Pour 25 mL of ${r2Name} from the supply beaker into the reaction vessel.`,
+      title: `Mix ${r2Display} into ${r1Display}`,
+      instruction: `Pour 25 mL of 0.1M ${r2Display} into 0.1M ${r1Display} to initiate reaction.`,
       requiredAction: 'pour',
       sourceId: 'vessel-2',
       targetId: 'vessel-1',
       minVolume: 20,
       successMessage: `Right step! Solutions mixed. ${prediction.visualObservation}`,
-      hintMessage: 'Drag the supply beaker over the reaction vessel to initiate transfer.',
+      hintMessage: 'Drag the beaker over the receiving vessel to initiate transfer.',
     },
     {
       step: 3,

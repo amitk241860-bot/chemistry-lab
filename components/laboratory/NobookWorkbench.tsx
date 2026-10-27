@@ -8,6 +8,7 @@ import { Stockroom, type StockItemDefinition } from './Stockroom';
 import { SolutionInfoPanel, type SelectedVesselData } from './SolutionInfoPanel';
 import { TransferModal } from './TransferModal';
 import { ProcedurePanel } from './ProcedurePanel';
+import { AiWorkbenchAssistant } from './AiWorkbenchAssistant';
 import {
   SparklesIcon,
   RotateCcwIcon,
@@ -29,6 +30,7 @@ import {
 } from '@/components/ui/Icons';
 import { SettingsModal } from '@/components/settings/SettingsModal';
 import type { CustomExperimentSetup } from '@/app/api/ai/analyze-experiment/route';
+import { predictReaction } from '@/lib/chemistry/chemmcpEngine';
 import {
   playGlassClink,
   playBurnerSound,
@@ -61,6 +63,7 @@ export interface WorkbenchItem {
   hasFilterPaper?: boolean;
   hasResidue?: boolean;
   hasSaltCrust?: boolean;
+  thermalRate?: number; // °C/s (+ when heating, - when cooling)
 }
 
 interface NobookWorkbenchProps {
@@ -69,29 +72,149 @@ interface NobookWorkbenchProps {
   customSetup?: CustomExperimentSetup;
 }
 
+// Extract chemical formula from vessel name, contentsName, or species
+export function extractChemicalFormula(item: WorkbenchItem): string {
+  const text = `${item.name} ${item.contentsName} ${Object.keys(item.species).join(' ')}`.toLowerCase();
+  if (text.includes('agno3') || text.includes('silver')) return 'AgNO3';
+  if (text.includes('nacl') || text.includes('sodium chloride') || text.includes('salt solution')) return 'NaCl';
+  if (text.includes('bacl2') || text.includes('barium')) return 'BaCl2';
+  if (text.includes('na2so4') || text.includes('sodium sulfate')) return 'Na2SO4';
+  if (text.includes('pb(no3)2') || text.includes('lead')) return 'Pb(NO3)2';
+  if (text.includes('ki') || text.includes('potassium iodide')) return 'KI';
+  if (text.includes('fecl3') || text.includes('iron(iii)')) return 'FeCl3';
+  if (text.includes('kscn') || text.includes('thiocyanate')) return 'KSCN';
+  if (text.includes('hcl') || text.includes('hydrochloric')) return 'HCl';
+  if (text.includes('naoh') || text.includes('sodium hydroxide')) return 'NaOH';
+  if (text.includes('cuso4') || text.includes('copper')) return 'CuSO4';
+  if (text.includes('feso4') || text.includes('iron(ii)')) return 'FeSO4';
+  if (text.includes('kmno4') || text.includes('permanganate')) return 'KMnO4';
+  if (text.includes('zn') || text.includes('zinc')) return 'Zn';
+  if (text.includes('h2so4') || text.includes('sulfuric')) return 'H2SO4';
+  if (text.includes('cacl2') || text.includes('calcium chloride')) return 'CaCl2';
+  if (text.includes('fe ') || text.includes('iron nail') || text.includes('iron metal')) return 'Fe';
+  if (text.includes('nh4cl') || text.includes('ammonium chloride')) return 'NH4Cl';
+  if (text.includes('ch3cooh') || text.includes('acetic') || text.includes('vinegar')) return 'CH3COOH';
+  if (text.includes('na2co3') || text.includes('sodium carbonate')) return 'Na2CO3';
+  if (text.includes('nahco3') || text.includes('bicarbonate') || text.includes('baking soda')) return 'NaHCO3';
+  return '';
+}
+
+// Clean vessel display name: strips placeholder words like "Reagent Beaker" / "Reaction Beaker"
+// and ensures the actual chemical compound name is displayed prominently!
+export function getCleanCompoundName(item: WorkbenchItem): string {
+  // Empty vessels
+  if (
+    item.volume === 0 &&
+    (!item.contentsName || item.contentsName === 'Empty' || item.contentsName === 'Empty Receiver' || item.contentsName === 'Empty Container')
+  ) {
+    if (item.type === 'beaker-250') return 'Empty Beaker (250 mL)';
+    if (item.type === 'beaker-100') return 'Empty Beaker (100 mL)';
+    if (item.type === 'conical-flask-250') return 'Empty Flask (250 mL)';
+    if (item.type === 'test-tube') return 'Empty Test Tube';
+    if (item.type === 'evaporating-dish') return 'Evaporating Dish';
+    if (item.type === 'filter-funnel') return 'Filter Funnel';
+    if (item.type === 'burette-50') return 'Empty Burette (50 mL)';
+    if (item.type === 'foam-cup') return 'Insulated Cup';
+    if (item.type === 'burner') return 'Bunsen Burner';
+    if (item.type === 'tripod') return 'Tripod & Wire Gauze';
+    if (item.type === 'filter-paper') return 'Filter Paper';
+    if (item.type === 'thermometer') return 'Lab Thermometer';
+    if (item.type === 'dropper-pipette') return 'Dropper Pipette';
+    return item.name;
+  }
+
+  let raw = item.name || item.contentsName || '';
+
+  // If raw name is generic placeholder ("Reagent Beaker", etc.) and contentsName contains the compound, prefer contentsName!
+  const isGeneric = /^(reagent|reaction|supply|receiving)?\s*(beaker|flask|container|vessel)?(\s*\([^\)]*\))?$/i.test(raw.trim());
+  if (isGeneric && item.contentsName && !/^(empty|container|receiver)$/i.test(item.contentsName.trim())) {
+    raw = item.contentsName;
+  }
+
+  // Extract from "contains 50 mL 0.1M AgNO3"
+  if (raw.includes('contains')) {
+    const match = raw.match(/contains\s+([^)]+)/i);
+    if (match && match[1]) {
+      raw = match[1].replace(/^\d+(\.\d+)?\s*mL\s*/i, '').trim();
+    }
+  }
+
+  // Strip placeholder words like "Reagent Beaker", "Reaction Beaker", "Supply Beaker", "Reagent 1 Container"
+  let cleaned = raw
+    .replace(/^Reaction\s*Beaker\s*:?\s*/i, '')
+    .replace(/^Reagent\s*Beaker\s*:?\s*/i, '')
+    .replace(/^Supply\s*Beaker\s*:?\s*/i, '')
+    .replace(/^Reagent\s*\d*\s*Container\s*:?\s*/i, '')
+    .replace(/^Receiving\s*Beaker\s*\(([^)]+)\)/i, 'Empty Beaker ($1)')
+    .replace(/^Beaker\s*[A-Z]?\s*\(([^)]+)\)/i, '$1')
+    .trim();
+
+  if (!cleaned || cleaned.toLowerCase() === 'beaker' || cleaned.toLowerCase() === 'reagent' || cleaned.toLowerCase() === 'reagent beaker') {
+    if (item.contentsName && item.contentsName !== 'Empty' && item.contentsName !== 'Empty Container') {
+      return item.contentsName;
+    }
+    const speciesKeys = Object.keys(item.species || {}).filter((k) => k !== 'H+' && k !== 'OH-');
+    if (speciesKeys.length > 0) {
+      return speciesKeys.join(' / ') + ' Solution';
+    }
+    return item.name;
+  }
+
+  return cleaned;
+}
+
 // Centered, well-spaced initial setups tailored to each experiment
 function getInitialSetupForExperiment(
   experiment: Experiment,
   customSetup?: CustomExperimentSetup
 ): WorkbenchItem[] {
   if (customSetup && customSetup.initialApparatus && customSetup.initialApparatus.length > 0) {
-    return customSetup.initialApparatus.map((a) => ({
-      id: a.id,
-      name: a.name,
-      type: a.type,
-      x: a.x,
-      y: a.y,
-      volume: a.volume,
-      maxVolume: a.maxVolume,
-      temperature: a.temperature || 25.0,
-      liquidColor: a.liquidColor || '#38bdf8',
-      pH: a.ph || 7.0,
-      species: (a.activeChemicals || []).reduce((acc, curr) => ({ ...acc, [curr]: 0.1 }), {}),
-      contentsName: a.name,
-      isHeating: a.isHeating,
-      hasFilterPaper: a.hasFilterPaper,
-      hasResidue: a.hasResidue,
-    }));
+    return customSetup.initialApparatus.map((a) => {
+      let cleanName = a.name;
+      if (cleanName.includes('contains')) {
+        const m = cleanName.match(/contains\s+([^)]+)/i);
+        if (m && m[1]) cleanName = m[1].replace(/^\d+(\.\d+)?\s*mL\s*/i, '').trim();
+      }
+      cleanName = cleanName
+        .replace(/^Reaction\s*Beaker\s*:?\s*/i, '')
+        .replace(/^Reagent\s*Beaker\s*:?\s*/i, '')
+        .replace(/^Supply\s*Beaker\s*:?\s*/i, '')
+        .replace(/^Reagent\s*\d*\s*Container\s*:?\s*/i, '')
+        .trim();
+
+      if (
+        !cleanName ||
+        cleanName.toLowerCase() === 'beaker' ||
+        cleanName.toLowerCase() === 'reagent' ||
+        cleanName.toLowerCase() === 'reagent beaker' ||
+        cleanName.toLowerCase() === 'reaction beaker' ||
+        cleanName.toLowerCase() === 'supply beaker'
+      ) {
+        if (a.volume > 0 && a.activeChemicals && a.activeChemicals.length > 0) {
+          cleanName = a.activeChemicals.join(' + ') + ' Solution';
+        } else if (a.volume === 0) {
+          cleanName = `Empty Beaker (${a.maxVolume || 250} mL)`;
+        }
+      }
+
+      return {
+        id: a.id,
+        name: cleanName || a.name,
+        type: a.type,
+        x: a.x,
+        y: a.y,
+        volume: a.volume,
+        maxVolume: a.maxVolume,
+        temperature: a.temperature || 25.0,
+        liquidColor: a.liquidColor || '#38bdf8',
+        pH: a.ph || 7.0,
+        species: (a.activeChemicals || []).reduce((acc, curr) => ({ ...acc, [curr]: 0.1 }), {}),
+        contentsName: cleanName || a.name,
+        isHeating: a.isHeating,
+        hasFilterPaper: a.hasFilterPaper,
+        hasResidue: a.hasResidue,
+      };
+    });
   }
 
   const id = experiment.id;
@@ -427,6 +550,10 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
+  // User's custom experiment flag: AI Co-Pilot is ONLY active when user makes their own experiment!
+  const isCustomExperiment = Boolean(customSetup || experiment.id === 'exp-custom');
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
+
   // Live AI Step Validation Notification Banner
   const [aiNotification, setAiNotification] = useState<{
     title: string;
@@ -468,7 +595,7 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
     if (!it) return null;
     return {
       id: it.id,
-      name: it.name,
+      name: getCleanCompoundName(it),
       type: it.type,
       volume: it.volume,
       maxVolume: it.maxVolume,
@@ -677,6 +804,68 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
       let nextDestPH = dest.pH;
       let nextDestColor = dest.liquidColor;
       const nextDestSpecies = { ...dest.species };
+      let nextDestName = dest.name;
+      let nextDestContents = dest.contentsName;
+      let nextDestTemp = dest.temperature;
+      let nextDestHasResidue = dest.hasResidue;
+
+      // If destination was completely empty, transfer contents and chemical name into it!
+      if (dest.volume === 0) {
+        nextDestName = getCleanCompoundName(src);
+        nextDestContents = src.contentsName || src.name;
+        nextDestColor = src.liquidColor;
+        nextDestPH = src.pH;
+        nextDestTemp = src.temperature;
+        Object.assign(nextDestSpecies, src.species);
+        if (src.hasResidue) nextDestHasResidue = true;
+      } else {
+        // Real-time Chemical Reaction Engine: Detect mixing between compounds
+        const chem1 = extractChemicalFormula(src);
+        const chem2 = extractChemicalFormula(dest);
+
+        if (chem1 && chem2 && chem1 !== chem2) {
+          const outcome = predictReaction([chem1, chem2]);
+          if (outcome.reactionType !== 'no-reaction' && outcome.products.length > 0) {
+            const primaryProduct = outcome.products[0];
+            // Update the name of the vessel to the actual chemical compound formed!
+            nextDestName = `${primaryProduct.name} (${primaryProduct.formula}${outcome.isPrecipitateForming ? '↓' : ''})`;
+            nextDestContents = outcome.products.map((p) => `${p.formula}${p.state === 's' ? '↓' : ''}`).join(' + ');
+            nextDestColor = outcome.precipitateColor || primaryProduct.color || nextDestColor;
+
+            if (outcome.isPrecipitateForming) {
+              nextDestHasResidue = true;
+            }
+            if (outcome.targetPH !== undefined) {
+              nextDestPH = outcome.targetPH;
+            }
+            if (outcome.deltaH < 0) {
+              nextDestTemp = Number((dest.temperature + (outcome.tempChangeExpected || 2.0)).toFixed(1));
+            }
+
+            // Audio feedback
+            if (outcome.isGasEvolving) {
+              if (soundEnabled) playFizzSound();
+            } else {
+              if (soundEnabled) playStepChime();
+            }
+
+            // Show what will happen mixing two chemicals with a live notification banner!
+            setAiNotification({
+              title: `⚗️ Reaction: ${outcome.equation}`,
+              message: `${outcome.visualObservation} | Product Formed: ${outcome.products.map((p) => `${p.name} (${p.formula})`).join(' + ')}${outcome.deltaH !== 0 ? ` (ΔH = ${outcome.deltaH} kJ/mol)` : ''}`,
+              type: 'success',
+            });
+
+            // Record in Student Observation Table
+            recordObservation('Reaction Equation', outcome.equation);
+            recordObservation('Reaction Outcome', outcome.visualObservation);
+            recordObservation('Products Formed', outcome.products.map((p) => `${p.name} (${p.formula})`).join(' + '));
+            if (outcome.deltaH !== 0) {
+              recordObservation('Reaction Enthalpy (ΔH)', `${outcome.deltaH} kJ/mol (${outcome.deltaH < 0 ? 'Exothermic' : 'Endothermic'})`);
+            }
+          }
+        }
+      }
 
       // Acid-Base Mixing
       if (src.species['H+'] && dest.species['OH-']) {
@@ -687,6 +876,8 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
         if (Math.abs(hMoles - ohMoles) < 1e-6) {
           nextDestPH = 7.0;
           nextDestColor = '#38bdf8';
+          nextDestName = 'Sodium Chloride Solution (NaCl) + Water';
+          nextDestContents = 'Neutralized NaCl(aq) + H₂O';
         } else if (ohMoles > hMoles) {
           const remOH = (ohMoles - hMoles) / totalV;
           nextDestPH = Number((14 + Math.log10(remOH)).toFixed(2));
@@ -704,6 +895,8 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
         if (Math.abs(ohMoles - hMoles) < 1e-6) {
           nextDestPH = 7.0;
           nextDestColor = dest.species['HIn'] ? '#f472b6' : '#38bdf8';
+          nextDestName = 'Sodium Chloride Solution (NaCl) + Water';
+          nextDestContents = 'Neutralized NaCl(aq) + H₂O';
         } else if (ohMoles > hMoles) {
           const remOH = (ohMoles - hMoles) / totalV;
           nextDestPH = Number((14 + Math.log10(remOH)).toFixed(2));
@@ -740,12 +933,13 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
 
         return prev.map((item) => {
           if (item.id === src.id) {
-            return { ...item, solidAmount: 0, contentsName: 'Empty Container' };
+            return { ...item, solidAmount: 0, contentsName: 'Empty Container', name: 'Empty Container' };
           }
           if (item.id === dest.id) {
             return {
               ...item,
               temperature: newTemp,
+              name: 'Calcium Chloride Solution (CaCl₂)',
               contentsName: '10% CaCl₂ Aqueous Solution',
               species: { 'Ca2+': 0.90, 'Cl-': 1.80, 'H+': 1e-7, 'OH-': 1e-7 },
             };
@@ -762,6 +956,7 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             return prev;
           }
           dest.hasResidue = true;
+          dest.name = 'Funnel (Sand Residue Trapped)';
           dest.contentsName = 'Funnel (Sand Residue Trapped)';
           recordObservation('Funnel Residue', 'Brown insoluble sand grains trapped on paper');
           recordObservation('Filtrate Permeate', 'Pure clear water drips through stem into receiving beaker');
@@ -773,16 +968,22 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
           return {
             ...item,
             volume: nextSrcVol,
+            name: nextSrcVol === 0 ? `Empty Beaker (${item.maxVolume || 250} mL)` : item.name,
             contentsName: nextSrcVol === 0 ? 'Empty' : item.contentsName,
+            species: nextSrcVol === 0 ? {} : item.species,
           };
         }
         if (item.id === dest.id) {
           return {
             ...item,
+            name: nextDestName,
+            contentsName: nextDestContents,
             volume: nextDestVol,
             pH: nextDestPH,
             liquidColor: nextDestColor,
             species: nextDestSpecies,
+            temperature: nextDestTemp,
+            hasResidue: nextDestHasResidue,
           };
         }
         return item;
@@ -825,11 +1026,15 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             if (item.id !== burner.id && Math.hypot(item.x - burner.x, item.y - (burner.y - 45)) < 80) {
               if (item.temperature < 100) {
                 hasChange = true;
-                const newTemp = Math.min(100, item.temperature + 1.8);
+                const newTemp = Math.min(100, item.temperature + 2.2);
                 if (newTemp >= 100) {
                   recordObservation('Boiling Temperature', '100.0', '°C');
                 }
-                return { ...item, temperature: Number(newTemp.toFixed(1)) };
+                return {
+                  ...item,
+                  temperature: Number(newTemp.toFixed(1)),
+                  thermalRate: 2.2,
+                };
               } else if (item.volume > 0 && (item.type === 'evaporating-dish' || item.type.includes('beaker'))) {
                 // Solvent evaporation
                 hasChange = true;
@@ -842,6 +1047,7 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
                   ...item,
                   volume: Number(newVol.toFixed(1)),
                   hasSaltCrust: hasCrust,
+                  thermalRate: 0,
                 };
               }
             }
@@ -855,7 +1061,18 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             const isNearLitBurner = burner && Math.hypot(item.x - burner.x, item.y - (burner.y - 45)) < 80;
             if (!isNearLitBurner) {
               hasChange = true;
-              return { ...item, temperature: Math.max(25.0, Number((item.temperature - 0.2).toFixed(1))) };
+              const newTemp = Math.max(25.0, Number((item.temperature - 0.6).toFixed(1)));
+              return {
+                ...item,
+                temperature: newTemp,
+                thermalRate: newTemp > 25.0 ? -0.6 : 0,
+              };
+            }
+          } else if (item.thermalRate !== undefined && item.thermalRate !== 0) {
+            const isNearLitBurner = burner && Math.hypot(item.x - burner.x, item.y - (burner.y - 45)) < 80;
+            if (!isNearLitBurner) {
+              hasChange = true;
+              return { ...item, thermalRate: 0 };
             }
           }
           return item;
@@ -1313,14 +1530,59 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
 
               {/* Floating Apparatus Badge */}
               <div className="mt-1 text-center">
-                <span className="text-[10px] font-bold text-white bg-slate-950/90 px-2 py-0.5 rounded-full border border-white/10 shadow-sm truncate inline-block max-w-[130px]">
-                  {item.name}
-                </span>
-                {item.volume > 0 && (
-                  <div className="text-[9px] font-mono text-cyan-300 font-semibold mt-0.5">
-                    {item.volume.toFixed(1)} mL
-                  </div>
-                )}
+                {(() => {
+                  const displayName = getCleanCompoundName(item);
+                  const isProduct =
+                    item.hasResidue ||
+                    displayName.includes('↓') ||
+                    displayName.includes('Precipitate') ||
+                    displayName.includes('Complex') ||
+                    displayName.includes('Product');
+
+                  return (
+                    <span
+                      title={displayName}
+                      className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border shadow-sm truncate inline-block max-w-[155px] transition-all ${
+                        isProduct
+                          ? 'bg-emerald-950/95 text-emerald-200 border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.35)] ring-1 ring-emerald-500/50'
+                          : 'bg-slate-950/90 text-white border-white/10'
+                      }`}
+                    >
+                      {isProduct && <span className="mr-1 text-emerald-400">✨</span>}
+                      {displayName}
+                    </span>
+                  );
+                })()}
+                {/* Volume & Dynamic Thermal readout */}
+                <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                  {item.volume > 0 && (
+                    <span className="text-[9px] font-mono text-cyan-300 font-semibold">
+                      {item.volume.toFixed(1)} mL
+                    </span>
+                  )}
+                  {item.maxVolume > 0 && item.temperature !== undefined && (
+                    <span
+                      className={`text-[9px] font-mono font-bold px-1 rounded transition-colors ${
+                        item.thermalRate && item.thermalRate > 0
+                          ? 'bg-rose-950/90 text-rose-300 border border-rose-500/50 animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.4)]'
+                          : item.thermalRate && item.thermalRate < 0
+                          ? 'bg-cyan-950/90 text-cyan-300 border border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.3)]'
+                          : 'text-amber-300/80'
+                      }`}
+                      title={
+                        item.thermalRate && item.thermalRate > 0
+                          ? `Heating up (+${item.thermalRate}°C/s)`
+                          : item.thermalRate && item.thermalRate < 0
+                          ? `Cooling down (${item.thermalRate}°C/s)`
+                          : 'Thermal equilibrium'
+                      }
+                    >
+                      {item.thermalRate && item.thermalRate > 0 && '🔥 '}
+                      {item.thermalRate && item.thermalRate < 0 && '❄️ '}
+                      {item.temperature.toFixed(1)}°C
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Interactive Flame toggle button for Burner */}
@@ -1380,37 +1642,52 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
         isOpen={transferState.isOpen}
         sourceVessel={
           items.find((i) => i.id === transferState.sourceId)
-            ? {
-                id: transferState.sourceId!,
-                name: items.find((i) => i.id === transferState.sourceId)!.name,
-                type: items.find((i) => i.id === transferState.sourceId)!.type,
-                volume: items.find((i) => i.id === transferState.sourceId)!.volume,
-                maxVolume: items.find((i) => i.id === transferState.sourceId)!.maxVolume,
-                temperature: items.find((i) => i.id === transferState.sourceId)!.temperature,
-                pH: items.find((i) => i.id === transferState.sourceId)!.pH,
-                species: items.find((i) => i.id === transferState.sourceId)!.species,
-                liquidColor: items.find((i) => i.id === transferState.sourceId)!.liquidColor,
-              }
+            ? (() => {
+                const it = items.find((i) => i.id === transferState.sourceId)!;
+                return {
+                  id: it.id,
+                  name: getCleanCompoundName(it),
+                  type: it.type,
+                  volume: it.volume,
+                  maxVolume: it.maxVolume,
+                  temperature: it.temperature,
+                  pH: it.pH,
+                  species: it.species,
+                  liquidColor: it.liquidColor,
+                };
+              })()
             : null
         }
         destVessel={
           items.find((i) => i.id === transferState.destId)
-            ? {
-                id: transferState.destId!,
-                name: items.find((i) => i.id === transferState.destId)!.name,
-                type: items.find((i) => i.id === transferState.destId)!.type,
-                volume: items.find((i) => i.id === transferState.destId)!.volume,
-                maxVolume: items.find((i) => i.id === transferState.destId)!.maxVolume,
-                temperature: items.find((i) => i.id === transferState.destId)!.temperature,
-                pH: items.find((i) => i.id === transferState.destId)!.pH,
-                species: items.find((i) => i.id === transferState.destId)!.species,
-                liquidColor: items.find((i) => i.id === transferState.destId)!.liquidColor,
-              }
+            ? (() => {
+                const it = items.find((i) => i.id === transferState.destId)!;
+                return {
+                  id: it.id,
+                  name: getCleanCompoundName(it),
+                  type: it.type,
+                  volume: it.volume,
+                  maxVolume: it.maxVolume,
+                  temperature: it.temperature,
+                  pH: it.pH,
+                  species: it.species,
+                  liquidColor: it.liquidColor,
+                };
+              })()
             : null
         }
         onClose={() => setTransferState({ isOpen: false, sourceId: null, destId: null })}
         onTransfer={handleExecuteTransfer}
       />
+
+      {/* AI Lab Co-Pilot: ONLY enabled in custom user experiments where user makes their own experiment */}
+      {isCustomExperiment && (
+        <AiWorkbenchAssistant
+          items={items}
+          isOpen={isAiAssistantOpen}
+          onToggle={() => setIsAiAssistantOpen(!isAiAssistantOpen)}
+        />
+      )}
     </div>
   );
 };

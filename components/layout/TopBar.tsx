@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { SearchIcon, BookOpenIcon, AtomIcon, SparklesIcon, SettingsIcon } from '@/components/ui/Icons';
 import { SettingsModal } from '@/components/settings/SettingsModal';
+import { AppLogo } from '@/components/ui/AppLogo';
 import { ALL_EXPERIMENTS } from '@/lib/experiments';
 
 export const TopBar: React.FC = () => {
@@ -23,9 +24,15 @@ export const TopBar: React.FC = () => {
     : [];
 
   return (
-    <header className="h-16 border-b border-cyan-500/15 bg-slate-950/70 backdrop-blur-2xl px-6 flex items-center justify-between sticky top-0 z-30 select-none">
-      {/* Search Bar with Autocomplete Dropdown */}
-      <div className="relative w-80 max-w-full">
+    <header className="h-16 border-b border-cyan-500/15 bg-slate-950/70 backdrop-blur-2xl px-4 sm:px-6 flex items-center justify-between sticky top-0 z-30 select-none">
+      <div className="flex items-center gap-3">
+        {/* Mobile Brand Logo */}
+        <div className="md:hidden">
+          <AppLogo size="sm" />
+        </div>
+
+        {/* Search Bar with Autocomplete Dropdown */}
+        <div className="relative w-48 sm:w-80 max-w-full">
         <div className="relative flex items-center">
           <SearchIcon className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
           <input
@@ -65,6 +72,7 @@ export const TopBar: React.FC = () => {
             ))}
           </div>
         )}
+      </div>
       </div>
 
       {/* Quick Practical Shortcuts & Engine Badge */}
