@@ -1287,6 +1287,27 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             <span className="hidden sm:inline">Info</span>
           </button>
 
+          {/* AI Co-Pilot Header Button (Only in Custom User Experiments) */}
+          {isCustomExperiment && (
+            <button
+              onClick={() => {
+                setIsAiAssistantOpen(!isAiAssistantOpen);
+                setIsStockroomOpen(false);
+                setIsProcedureOpen(false);
+                setIsThreeDotMenuOpen(false);
+              }}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                isAiAssistantOpen
+                  ? 'bg-gradient-to-r from-violet-600 to-cyan-600 text-white font-bold shadow-[0_0_15px_rgba(139,92,246,0.5)]'
+                  : 'text-violet-300 hover:text-white bg-violet-950/40 hover:bg-violet-900/60 border border-violet-500/30'
+              }`}
+              title="Open AI Lab Co-Pilot (Predict mixing, burner thermal effects, ask questions)"
+            >
+              <SparklesIcon className="w-3.5 h-3.5 text-cyan-300" />
+              <span>AI Co-Pilot</span>
+            </button>
+          )}
+
           {/* THREE-DOT MENU BUTTON (⋮) */}
           <button
             onClick={() => setIsThreeDotMenuOpen(!isThreeDotMenuOpen)}
@@ -1309,6 +1330,20 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
               <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/5">
                 Workbench Actions
               </div>
+
+              {/* AI Lab Co-Pilot for Custom Experiment */}
+              {isCustomExperiment && (
+                <button
+                  onClick={() => {
+                    setIsAiAssistantOpen(true);
+                    setIsThreeDotMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl text-xs text-violet-200 hover:bg-violet-950/60 transition-colors flex items-center gap-2.5 font-bold"
+                >
+                  <SparklesIcon className="w-3.5 h-3.5 text-violet-400" />
+                  <span>AI Experiment Co-Pilot</span>
+                </button>
+              )}
 
               {/* Reset Setup */}
               <button
