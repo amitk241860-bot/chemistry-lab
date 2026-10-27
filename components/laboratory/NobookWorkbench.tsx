@@ -28,6 +28,10 @@ import {
   ShieldAlertIcon,
   XIcon,
   SettingsIcon,
+  PlayIcon,
+  PauseIcon,
+  SkipForwardIcon,
+  FastForwardIcon,
 } from '@/components/ui/Icons';
 import { SettingsModal } from '@/components/settings/SettingsModal';
 import type { CustomExperimentSetup } from '@/app/api/ai/analyze-experiment/route';
@@ -554,6 +558,10 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
   // User's custom experiment flag: AI Co-Pilot is ONLY active when user makes their own experiment!
   const isCustomExperiment = Boolean(customSetup || experiment.id === 'exp-custom');
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
+
+  // AI Auto-Done / Auto-Pilot Experiment State (Enabled for Custom Experiments)
+  const [isAutoRunning, setIsAutoRunning] = useState<boolean>(false);
+  const [autoRunSpeed, setAutoRunSpeed] = useState<number>(1);
 
   // Live AI Step Validation Notification Banner
   const [aiNotification, setAiNotification] = useState<{
@@ -1189,6 +1197,272 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
     }
   };
 
+  // AI Auto-Done: Execute a single step automatically following procedure instructions
+  const handleAutoRunStep = useCallback(
+    (stepIdx: number) => {
+      const step = experiment.steps[stepIdx];
+      if (!step) return;
+
+      if (soundEnabled) playStepChime();
+
+      // Analyze step action or custom milestone
+      const milestone = customSetup?.milestones?.[stepIdx];
+      const instructionLower = (milestone?.instruction || step.instruction || '').toLowerCase();
+      const titleLower = (milestone?.title || step.title || '').toLowerCase();
+
+      // Check if step involves heating / boiling
+      const isHeatingStep =
+        milestone?.requiredAction === 'heat' ||
+        instructionLower.includes('heat') ||
+        instructionLower.includes('burner') ||
+        instructionLower.includes('boil') ||
+        instructionLower.includes('flame') ||
+        instructionLower.includes('evaporat') ||
+        titleLower.includes('heat') ||
+        titleLower.includes('boil');
+
+      // Check if step involves mixing / pouring
+      const isPouringStep =
+        milestone?.requiredAction === 'pour' ||
+        milestone?.requiredAction === 'mix' ||
+        instructionLower.includes('pour') ||
+        instructionLower.includes('add') ||
+        instructionLower.includes('transfer') ||
+        instructionLower.includes('mix') ||
+        titleLower.includes('pour') ||
+        titleLower.includes('add');
+
+      // Check if step involves filtering
+      const isFiltrationStep =
+        instructionLower.includes('filter') ||
+        instructionLower.includes('funnel') ||
+        titleLower.includes('filter');
+
+      if (isHeatingStep) {
+        // Find burner and vessel to heat
+        setItems((prev) => {
+          const burner = prev.find((i) => i.type === 'burner');
+          const heatable = prev.find((i) => i.id !== burner?.id && i.maxVolume > 0);
+
+          if (burner && heatable) {
+            if (soundEnabled) playBurnerSound();
+            recordObservation('Bunsen Burner Flame', 'Ignited steady blue oxidizing flame');
+            recordObservation('Heating Rate', '+2.2°C per second');
+            recordObservation('Boiling Temperature (Tb)', '100.0', '°C');
+
+            const willEvaporate =
+              instructionLower.includes('evaporat') ||
+              instructionLower.includes('dryness') ||
+              titleLower.includes('evaporat');
+
+            return prev.map((it) => {
+              if (it.id === burner.id) {
+                return { ...it, isHeating: true };
+              }
+              if (it.id === heatable.id) {
+                return {
+                  ...it,
+                  x: burner.x,
+                  y: burner.y - 70,
+                  temperature: 100.0,
+                  thermalRate: 2.2,
+                  volume: willEvaporate ? 0 : it.volume,
+                  hasSaltCrust: willEvaporate || it.hasSaltCrust,
+                };
+              }
+              return it;
+            });
+          }
+          return prev;
+        });
+
+        setAiNotification({
+          title: `🤖 AI Step ${stepIdx + 1} Done: Burner Heating Activated`,
+          message: `${step.title}: Bunsen burner ignited, temperature increased to 100.0°C boiling point!`,
+          type: 'success',
+        });
+      } else if (isFiltrationStep) {
+        setItems((prev) => {
+          return prev.map((it) => {
+            if (it.type === 'filter-funnel') {
+              return {
+                ...it,
+                hasFilterPaper: true,
+                hasResidue: true,
+                name: 'Filter Funnel (Residue Trapped)',
+                contentsName: 'Insoluble Residue on Paper',
+              };
+            }
+            return it;
+          });
+        });
+
+        recordObservation('Filter Paper Cone', 'Fitted snugly in funnel');
+        recordObservation('Filtration Action', 'Suspension poured, clear filtrate permeates stem');
+
+        setAiNotification({
+          title: `🤖 AI Step ${stepIdx + 1} Done: Gravity Filtration`,
+          message: `${step.title}: Filter paper seated, suspension poured and filtered!`,
+          type: 'success',
+        });
+      } else if (isPouringStep) {
+        // Find 2 vessels
+        setItems((prev) => {
+          const liquids = prev.filter((i) => i.maxVolume > 0 && (i.volume > 0 || i.solidAmount));
+          if (liquids.length >= 2) {
+            const src = liquids[0];
+            const dest = liquids[1];
+            const transferVol = Math.min(25, src.volume || 25);
+
+            // Predict reaction
+            const chem1 = extractChemicalFormula(src);
+            const chem2 = extractChemicalFormula(dest);
+            let outcome: any = null;
+            if (chem1 && chem2) {
+              outcome = predictReaction([chem1, chem2]);
+            }
+
+            if (soundEnabled) {
+              if (outcome?.isGasEvolving) playFizzSound();
+              else playPouringSound();
+            }
+
+            const nextSrcVol = Math.max(0, src.volume - transferVol);
+            const nextDestVol = dest.volume + transferVol;
+
+            let newDestName = dest.name;
+            let newDestContents = dest.contentsName;
+            let newDestColor = dest.liquidColor;
+            let newDestHasResidue = dest.hasResidue;
+            let newDestTemp = dest.temperature;
+
+            if (outcome && outcome.reactionType !== 'no-reaction' && outcome.products.length > 0) {
+              const p = outcome.products[0];
+              newDestName = `${p.name} (${p.formula}${outcome.isPrecipitateForming ? '↓' : ''})`;
+              newDestContents = outcome.products
+                .map((pr: any) => `${pr.formula}${pr.state === 's' ? '↓' : ''}`)
+                .join(' + ');
+              newDestColor = outcome.precipitateColor || p.color || newDestColor;
+              if (outcome.isPrecipitateForming) newDestHasResidue = true;
+              if (outcome.deltaH < 0) {
+                newDestTemp = Number((dest.temperature + (outcome.tempChangeExpected || 2.0)).toFixed(1));
+              }
+
+              recordObservation('Reaction Equation', outcome.equation);
+              recordObservation(
+                'Products Formed',
+                outcome.products.map((pr: any) => `${pr.name} (${pr.formula})`).join(' + ')
+              );
+              if (outcome.deltaH !== 0) {
+                recordObservation(
+                  'Reaction Enthalpy (ΔH)',
+                  `${outcome.deltaH} kJ/mol (${outcome.deltaH < 0 ? 'Exothermic' : 'Endothermic'})`
+                );
+              }
+            }
+
+            return prev.map((it) => {
+              if (it.id === src.id) {
+                return {
+                  ...it,
+                  volume: nextSrcVol,
+                  name: nextSrcVol === 0 ? `Empty Beaker (${it.maxVolume || 250} mL)` : it.name,
+                  contentsName: nextSrcVol === 0 ? 'Empty' : it.contentsName,
+                };
+              }
+              if (it.id === dest.id) {
+                return {
+                  ...it,
+                  name: newDestName,
+                  contentsName: newDestContents,
+                  volume: nextDestVol,
+                  liquidColor: newDestColor,
+                  hasResidue: newDestHasResidue,
+                  temperature: newDestTemp,
+                };
+              }
+              return it;
+            });
+          }
+          return prev;
+        });
+
+        setAiNotification({
+          title: `🤖 AI Step ${stepIdx + 1} Done: Reagents Mixed`,
+          message: `${step.title}: Solution transferred, chemical reaction observed and recorded!`,
+          type: 'success',
+        });
+      } else {
+        // General observation step
+        recordObservation(
+          `Step ${stepIdx + 1} Observation`,
+          step.instruction || 'Procedure completed successfully'
+        );
+        setAiNotification({
+          title: `🤖 AI Step ${stepIdx + 1} Done: Verified`,
+          message: `${step.title}: Observation verified by AI!`,
+          type: 'success',
+        });
+      }
+
+      // Mark step completed
+      setCompletedSteps((prev) => [...new Set([...prev, stepIdx])]);
+
+      // Advance or finish
+      if (stepIdx < experiment.steps.length - 1) {
+        setCurrentStepIndex(stepIdx + 1);
+      } else {
+        setIsAutoRunning(false);
+        if (soundEnabled) playCompletionFanfare();
+        setAiNotification({
+          title: '🎉 Experiment Completed by AI Co-Pilot!',
+          message:
+            'All procedure milestones completed with full observations and chemical reaction results verified.',
+          type: 'success',
+        });
+      }
+    },
+    [experiment.steps, customSetup, soundEnabled, recordObservation]
+  );
+
+  // Auto-Complete entire experiment instantly
+  const handleAutoCompleteAll = () => {
+    setIsAutoRunning(false);
+    if (soundEnabled) playCompletionFanfare();
+
+    // Execute every step from current to end
+    for (let idx = currentStepIndex; idx < experiment.steps.length; idx++) {
+      handleAutoRunStep(idx);
+    }
+
+    const allStepIndices = experiment.steps.map((_, i) => i);
+    setCompletedSteps(allStepIndices);
+    setCurrentStepIndex(experiment.steps.length - 1);
+
+    setAiNotification({
+      title: '⚡ Entire Experiment Auto-Completed by AI!',
+      message:
+        'All chemical transformations, burner thermal dynamics, and procedure observations have been executed.',
+      type: 'success',
+    });
+  };
+
+  // AI Auto-Run step progression loop timer
+  useEffect(() => {
+    if (!isAutoRunning) return;
+    if (currentStepIndex >= experiment.steps.length) {
+      setIsAutoRunning(false);
+      return;
+    }
+
+    const delayMs = autoRunSpeed === 2 ? 1600 : autoRunSpeed === 0.5 ? 4500 : 2800;
+    const timer = setTimeout(() => {
+      handleAutoRunStep(currentStepIndex);
+    }, delayMs);
+
+    return () => clearTimeout(timer);
+  }, [isAutoRunning, currentStepIndex, autoRunSpeed, experiment.steps.length, handleAutoRunStep]);
+
   const currentStep = experiment.steps[currentStepIndex] || experiment.steps[0];
 
   return (
@@ -1307,6 +1581,48 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
               <SparklesIcon className="w-3.5 h-3.5 text-cyan-300" />
               <span>AI Co-Pilot</span>
             </button>
+          )}
+
+          {/* AI Auto-Done / Auto-Execute Button (Only in Custom User Experiments) */}
+          {isCustomExperiment && (
+            <div className="flex items-center gap-1 bg-violet-950/40 border border-violet-500/40 rounded-lg p-0.5">
+              <button
+                onClick={() => {
+                  if (isAutoRunning) {
+                    setIsAutoRunning(false);
+                  } else {
+                    setIsAutoRunning(true);
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all ${
+                  isAutoRunning
+                    ? 'bg-rose-500 text-white animate-pulse shadow-[0_0_12px_rgba(244,63,94,0.5)]'
+                    : 'bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white shadow-sm'
+                }`}
+                title={isAutoRunning ? 'Pause Auto-Done Experiment' : 'Auto-Done Experiment by AI'}
+              >
+                {isAutoRunning ? (
+                  <>
+                    <PauseIcon className="w-3.5 h-3.5" />
+                    <span>Pause</span>
+                  </>
+                ) : (
+                  <>
+                    <PlayIcon className="w-3.5 h-3.5 text-cyan-200" />
+                    <span>Auto-Done</span>
+                  </>
+                )}
+              </button>
+
+              {/* 1-Click Fast-Forward / Auto-Complete Entire Experiment */}
+              <button
+                onClick={handleAutoCompleteAll}
+                className="p-1 rounded-md text-cyan-300 hover:text-white hover:bg-cyan-500/20 transition-colors"
+                title="Auto-Complete Entire Experiment Instantly"
+              >
+                <FastForwardIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
 
           {/* THREE-DOT MENU BUTTON (⋮) */}
@@ -1530,7 +1846,7 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
           </div>
         )}
 
-        {/* Real-time AI Chemical Mix Radar & Burner Thermal Dynamics (Strictly in Custom Experiments) */}
+        {/* Real-time AI Chemical Mix Radar, Burner Thermal Dynamics & Auto-Done Engine (Strictly in Custom Experiments) */}
         {isCustomExperiment && (
           <AiWorkbenchOverlay
             items={items}
@@ -1541,7 +1857,55 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
               setTransferState({ isOpen: true, sourceId: srcId, destId });
             }}
             onOpenFullAssistant={() => setIsAiAssistantOpen(true)}
+            isAutoRunning={isAutoRunning}
+            autoRunSpeed={autoRunSpeed}
+            currentStepIndex={currentStepIndex}
+            totalSteps={experiment.steps.length}
+            currentStepTitle={currentStep.title}
+            currentStepInstruction={currentStep.instruction}
+            onStartAutoRun={() => setIsAutoRunning(true)}
+            onPauseAutoRun={() => setIsAutoRunning(false)}
+            onNextAutoRunStep={() => handleAutoRunStep(currentStepIndex)}
+            onAutoCompleteAll={handleAutoCompleteAll}
+            onChangeAutoRunSpeed={(spd) => setAutoRunSpeed(spd)}
           />
+        )}
+
+        {/* Live Floating Active Auto-Pilot HUD Banner when AI is automatically performing experiment */}
+        {isCustomExperiment && isAutoRunning && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-2.5 rounded-2xl bg-slate-900/95 border border-cyan-400/60 shadow-[0_0_40px_rgba(6,182,212,0.4)] text-white backdrop-blur-2xl animate-in fade-in slide-in-from-top-4 duration-200">
+            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase text-cyan-300">
+                  AI Auto-Pilot Running • Step {currentStepIndex + 1}/{experiment.steps.length}
+                </span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded bg-violet-600/50 text-violet-200 font-mono">
+                  {autoRunSpeed}x Speed
+                </span>
+              </div>
+              <p className="text-xs font-bold text-white truncate max-w-sm">
+                {currentStep.title}: {currentStep.instruction}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 ml-2">
+              <button
+                onClick={() => setIsAutoRunning(false)}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold flex items-center gap-1 transition-colors"
+                title="Pause Auto-Pilot"
+              >
+                <PauseIcon className="w-3 h-3" />
+                <span>Pause</span>
+              </button>
+              <button
+                onClick={() => handleAutoRunStep(currentStepIndex)}
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-bold transition-colors"
+                title="Skip to Next Step"
+              >
+                <SkipForwardIcon className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Interactive Apparatus Items on the Workbench - Center Spaced & Free to Move */}
@@ -1806,6 +2170,31 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
           >
             <SparklesIcon className="w-4 h-4 text-cyan-300" />
             <span className="text-[9px] mt-0.5 font-medium">AI Co-Pilot</span>
+          </button>
+        )}
+
+        {/* AI Auto-Done (Strictly Custom Experiments Only) */}
+        {isCustomExperiment && (
+          <button
+            onClick={() => {
+              if (soundEnabled) playStepChime();
+              setIsAutoRunning(!isAutoRunning);
+            }}
+            className={`flex flex-col items-center justify-center min-w-[48px] py-1 rounded-xl transition-all active:scale-95 ${
+              isAutoRunning
+                ? 'text-rose-400 font-bold bg-rose-500/20 animate-pulse'
+                : 'text-cyan-400 hover:text-white'
+            }`}
+            title="Auto-Done Experiment by AI"
+          >
+            {isAutoRunning ? (
+              <PauseIcon className="w-4 h-4 text-rose-400" />
+            ) : (
+              <PlayIcon className="w-4 h-4 text-cyan-300" />
+            )}
+            <span className="text-[9px] mt-0.5 font-medium">
+              {isAutoRunning ? 'Pause' : 'Auto-Done'}
+            </span>
           </button>
         )}
 

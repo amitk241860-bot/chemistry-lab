@@ -10,6 +10,10 @@ import {
   CheckIcon,
   HelpCircleIcon,
   SendIcon,
+  PlayIcon,
+  PauseIcon,
+  SkipForwardIcon,
+  FastForwardIcon,
 } from '@/components/ui/Icons';
 import { predictReaction } from '@/lib/chemistry/chemmcpEngine';
 import { loadSettings } from '@/lib/settings/settingsStore';
@@ -24,6 +28,18 @@ interface AiWorkbenchOverlayProps {
   onToggleBurner: (burnerId: string) => void;
   onExecuteMix: (sourceId: string, destId: string) => void;
   onOpenFullAssistant: () => void;
+  // Auto-Done Experiment Props
+  isAutoRunning?: boolean;
+  autoRunSpeed?: number;
+  currentStepIndex?: number;
+  totalSteps?: number;
+  currentStepTitle?: string;
+  currentStepInstruction?: string;
+  onStartAutoRun?: () => void;
+  onPauseAutoRun?: () => void;
+  onNextAutoRunStep?: () => void;
+  onAutoCompleteAll?: () => void;
+  onChangeAutoRunSpeed?: (spd: number) => void;
 }
 
 export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
@@ -33,8 +49,19 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
   onToggleBurner,
   onExecuteMix,
   onOpenFullAssistant,
+  isAutoRunning = false,
+  autoRunSpeed = 1,
+  currentStepIndex = 0,
+  totalSteps = 1,
+  currentStepTitle = 'Initial Step',
+  currentStepInstruction = 'Follow procedure guidelines.',
+  onStartAutoRun,
+  onPauseAutoRun,
+  onNextAutoRunStep,
+  onAutoCompleteAll,
+  onChangeAutoRunSpeed,
 }) => {
-  const [activePanel, setActivePanel] = useState<'mixing' | 'burner' | 'ask' | 'minimized'>('mixing');
+  const [activePanel, setActivePanel] = useState<'mixing' | 'burner' | 'autodone' | 'ask' | 'minimized'>('autodone');
   const [selectedVesselA, setSelectedVesselA] = useState<string>('');
   const [selectedVesselB, setSelectedVesselB] = useState<string>('');
   const [aiMixingPrediction, setAiMixingPrediction] = useState<any>(null);
@@ -150,15 +177,15 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
     return (
       <div className="absolute top-14 left-4 z-30 animate-in fade-in duration-150">
         <button
-          onClick={() => setActivePanel('mixing')}
+          onClick={() => setActivePanel('autodone')}
           className="flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-violet-500/40 text-violet-300 hover:text-white text-xs font-bold shadow-[0_0_20px_rgba(139,92,246,0.35)] backdrop-blur-xl transition-all hover:scale-105 active:scale-95"
           title="Expand AI Workbench Radar"
         >
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+          <span className={`w-2 h-2 rounded-full ${isAutoRunning ? 'bg-rose-400 animate-ping' : 'bg-cyan-400 animate-ping'}`} />
           <SparklesIcon className="w-3.5 h-3.5 text-cyan-300" />
-          <span>AI Co-Pilot Radar</span>
+          <span>{isAutoRunning ? 'AI Auto-Pilot Running...' : 'AI Co-Pilot Radar'}</span>
           <span className="text-[9px] px-1.5 py-0.2 rounded bg-violet-500/20 text-violet-300 font-mono">
-            Active
+            Step {currentStepIndex + 1}/{totalSteps}
           </span>
         </button>
       </div>
@@ -166,7 +193,7 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
   }
 
   return (
-    <div className="absolute top-14 left-4 z-30 w-80 sm:w-96 max-w-[calc(100vw-32px)] bg-slate-950/95 border border-cyan-500/35 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.85)] backdrop-blur-2xl flex flex-col overflow-hidden text-slate-100 animate-in fade-in slide-in-from-left duration-200 select-none">
+    <div className="absolute top-14 left-4 z-30 w-84 sm:w-96 max-w-[calc(100vw-32px)] bg-slate-950/95 border border-cyan-500/35 rounded-2xl shadow-[0_15px_45px_rgba(0,0,0,0.85)] backdrop-blur-2xl flex flex-col overflow-hidden text-slate-100 animate-in fade-in slide-in-from-left duration-200 select-none">
       {/* Top Header Bar */}
       <div className="px-3.5 py-2.5 bg-gradient-to-r from-violet-950/80 via-slate-900 to-cyan-950/80 border-b border-white/10 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -175,7 +202,7 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
           </div>
           <div>
             <div className="text-xs font-black text-white flex items-center gap-1.5">
-              <span>AI Workbench Radar</span>
+              <span>AI Workbench Co-Pilot</span>
               <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
                 Custom Lab
               </span>
@@ -203,6 +230,21 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
 
       {/* Navigation Tabs */}
       <div className="flex border-b border-white/10 bg-slate-900/60 p-1 gap-1 text-[11px] font-bold">
+        {/* Tab 1: Auto-Done */}
+        <button
+          onClick={() => setActivePanel('autodone')}
+          className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            activePanel === 'autodone'
+              ? 'bg-gradient-to-r from-violet-600/30 to-cyan-600/30 text-white border border-cyan-400/50 shadow-[0_0_12px_rgba(6,182,212,0.3)]'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <SparklesIcon className="w-3 h-3 text-cyan-300" />
+          <span>Auto-Done</span>
+          {isAutoRunning && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />}
+        </button>
+
+        {/* Tab 2: Mixing */}
         <button
           onClick={() => setActivePanel('mixing')}
           className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
@@ -212,9 +254,10 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
           }`}
         >
           <DropletsIcon className="w-3 h-3" />
-          <span>Mixing Outcome</span>
+          <span>Mixing</span>
         </button>
 
+        {/* Tab 3: Burner Dynamics */}
         <button
           onClick={() => setActivePanel('burner')}
           className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
@@ -224,9 +267,10 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
           }`}
         >
           <FlameIcon className="w-3 h-3 text-rose-400" />
-          <span>Burner Dynamics</span>
+          <span>Burner</span>
         </button>
 
+        {/* Tab 4: Ask AI */}
         <button
           onClick={() => setActivePanel('ask')}
           className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
@@ -236,9 +280,115 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
           }`}
         >
           <HelpCircleIcon className="w-3 h-3 text-violet-400" />
-          <span>Ask AI</span>
+          <span>Ask</span>
         </button>
       </div>
+
+      {/* PANEL 0: AI AUTO-DONE EXPERIMENT ENGINE */}
+      {activePanel === 'autodone' && (
+        <div className="p-3 space-y-3 max-h-[360px] overflow-y-auto text-xs">
+          {/* Active Step Status Card */}
+          <div className="p-3 rounded-xl bg-gradient-to-r from-violet-950/60 via-slate-900 to-cyan-950/60 border border-cyan-500/40 shadow-inner space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${isAutoRunning ? 'bg-cyan-400 animate-ping' : 'bg-slate-400'}`} />
+                Step {currentStepIndex + 1} of {totalSteps}
+              </span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30 font-bold">
+                {isAutoRunning ? 'Auto-Running...' : 'Ready to Run'}
+              </span>
+            </div>
+
+            <h4 className="text-xs font-bold text-white truncate">
+              {currentStepTitle}
+            </h4>
+            <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+              {currentStepInstruction}
+            </p>
+          </div>
+
+          {/* Auto-Done Main Controls */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              {/* Play / Pause Toggle */}
+              <button
+                onClick={() => {
+                  if (isAutoRunning) {
+                    onPauseAutoRun?.();
+                  } else {
+                    onStartAutoRun?.();
+                  }
+                }}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 ${
+                  isAutoRunning
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.4)]'
+                    : 'bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500 text-white shadow-[0_0_15px_rgba(6,182,212,0.35)]'
+                }`}
+              >
+                {isAutoRunning ? (
+                  <>
+                    <PauseIcon className="w-3.5 h-3.5" />
+                    <span>Pause Auto-Done</span>
+                  </>
+                ) : (
+                  <>
+                    <PlayIcon className="w-3.5 h-3.5 text-cyan-200" />
+                    <span>Auto-Done Step-by-Step</span>
+                  </>
+                )}
+              </button>
+
+              {/* Next Single Step */}
+              <button
+                onClick={() => onNextAutoRunStep?.()}
+                className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-cyan-300 hover:text-white text-xs font-bold transition-all active:scale-95"
+                title="Execute Current Step Immediately"
+              >
+                <SkipForwardIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 1-Click Instant Complete All Steps */}
+            <button
+              onClick={() => onAutoCompleteAll?.()}
+              className="w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-violet-500/30 hover:border-violet-400 text-violet-200 hover:text-white text-[11px] font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all active:scale-95"
+            >
+              <FastForwardIcon className="w-3.5 h-3.5 text-violet-400" />
+              <span>⚡ Auto-Complete Entire Experiment Now</span>
+            </button>
+          </div>
+
+          {/* Speed Toggle & Education Info */}
+          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-white/10">
+            <span>Simulation Pace:</span>
+            <div className="flex items-center gap-1 font-mono">
+              {[0.5, 1, 2].map((spd) => (
+                <button
+                  key={spd}
+                  onClick={() => onChangeAutoRunSpeed?.(spd)}
+                  className={`px-2 py-0.5 rounded-md font-bold transition-colors ${
+                    autoRunSpeed === spd
+                      ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-900 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {spd}x
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* How Experiment Happens Educational Breakdown */}
+          <div className="p-2.5 rounded-xl bg-slate-900/80 border border-white/5 space-y-1 text-[10px]">
+            <span className="font-bold text-cyan-300 block">🔬 How Experiment Happens:</span>
+            <p className="text-slate-300 leading-relaxed">
+              The AI Co-Pilot sequentially performs apparatus setup, reagent transfers, chemical reactions,
+              and thermal heating under Bunsen burner kinetics. Watch color changes, precipitate crystallization,
+              temperature increase/decrease, and data logged to your observation table.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* PANEL 1: CHEMICAL MIXING PREDICTOR */}
       {activePanel === 'mixing' && (
@@ -519,7 +669,7 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
         </div>
       )}
 
-      {/* PANEL 3: QUICK GEMINI Q&A */}
+      {/* PANEL 4: QUICK GEMINI Q&A */}
       {activePanel === 'ask' && (
         <div className="p-3 space-y-2.5 max-h-[350px] overflow-y-auto text-xs">
           <p className="text-[10px] text-slate-300">
