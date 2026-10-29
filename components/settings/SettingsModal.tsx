@@ -23,7 +23,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   const [settings, setSettings] = useState<UserLabSettings>(loadSettings());
   const [showKey, setShowKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ valid: boolean; message: string } | null>(null);
+  const [serverKeyConfigured, setServerKeyConfigured] = useState(false);
+  const [testResult, setTestResult] = useState<{ valid: boolean; message: string; models?: string[] } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
@@ -31,16 +32,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
       setSettings(loadSettings());
       setTestResult(null);
       setSaveSuccess(false);
+      fetch('/api/ai/test-key')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d && typeof d.configured === 'boolean') {
+            setServerKeyConfigured(d.configured);
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
   const handleTestConnection = async () => {
-    if (!settings.geminiApiKey) {
+    if (!settings.geminiApiKey && !serverKeyConfigured) {
       setTestResult({
         valid: false,
-        message: 'Please enter a Google Gemini API Key to test.',
+        message: 'Set GEMINI_API_KEY in .env.local on the server or enter a key to test.',
       });
       return;
     }
@@ -53,8 +62,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey: settings.geminiApiKey,
+          apiKey: settings.geminiApiKey || undefined,
           model: settings.preferredModel,
+          includeModels: true,
         }),
       });
       const data = await res.json();
@@ -63,11 +73,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         setTestResult({
           valid: true,
           message: data.message || 'Connection successful! Gemini AI is ready.',
+          models: Array.isArray(data.availableModels) ? data.availableModels.slice(0, 6) : undefined,
         });
       } else {
         setTestResult({
           valid: false,
-          message: data.error || 'Connection failed. Please check your key.',
+          message: data.error || 'Connection failed. Please verify your GEMINI_API_KEY in .env.local.',
         });
       }
     } catch (err: any) {
@@ -102,11 +113,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
                 Laboratory Settings & Gemini AI
                 <span className="px-2 py-0.5 text-[10px] font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-full">
-                  BYOK Secure
+                  Server .env.local Ready
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Configure your personal Google Gemini API Key and AI Laboratory preferences
+                Configure your Google Gemini model and laboratory simulation preferences
               </p>
             </div>
           </div>
@@ -126,6 +137,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               <label className="text-xs font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
                 <KeyIcon className="w-3.5 h-3.5 text-cyan-400" />
                 Google Gemini API Key
+                {serverKeyConfigured && (
+                  <span className="ml-1.5 px-2 py-0.5 text-[10px] rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 font-semibold normal-case">
+                    ✓ Loaded from Server .env.local
+                  </span>
+                )}
               </label>
               <a
                 href="https://aistudio.google.com/app/apikey"
@@ -145,7 +161,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   setSettings({ ...settings, geminiApiKey: e.target.value });
                   setTestResult(null);
                 }}
-                placeholder="AIzaSy..."
+                placeholder={
+                  serverKeyConfigured
+                    ? 'Using server-side GEMINI_API_KEY from .env.local (optional override)...'
+                    : 'Optional override (recommended: set GEMINI_API_KEY in .env.local)...'
+                }
                 className="w-full px-4 py-2.5 pr-24 rounded-xl bg-slate-950 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 font-mono transition"
               />
               <div className="absolute right-2 flex items-center gap-1">
@@ -160,7 +180,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 <button
                   type="button"
                   onClick={handleTestConnection}
-                  disabled={isTesting || !settings.geminiApiKey}
+                  disabled={isTesting || (!settings.geminiApiKey && !serverKeyConfigured)}
                   className="px-2.5 py-1 text-xs font-medium rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-40 disabled:hover:bg-cyan-600 transition flex items-center gap-1.5"
                 >
                   {isTesting ? (
@@ -174,25 +194,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
             {/* Privacy note */}
             <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-              <span className="text-emerald-400 font-bold">🔒 Stored locally</span> in your browser.
-              Your key is never sent to external servers or stored in any database.
+              <span className="text-emerald-400 font-bold">🔒 Server-side .env.local supported:</span>{' '}
+              Keep <code className="text-cyan-300">GEMINI_API_KEY</code> in <code className="text-cyan-300">.env.local</code> so it stays exclusively on the server.
             </p>
 
             {/* Test result status badge */}
             {testResult && (
               <div
-                className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                className={`p-3 rounded-xl border text-xs flex flex-col gap-1.5 ${
                   testResult.valid
                     ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
                     : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
                 }`}
               >
-                {testResult.valid ? (
-                  <CheckCircleIcon className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                ) : (
-                  <AlertCircleIcon className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
+                <div className="flex items-start gap-2.5">
+                  {testResult.valid ? (
+                    <CheckCircleIcon className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                  ) : (
+                    <AlertCircleIcon className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
+                  )}
+                  <span>{testResult.message}</span>
+                </div>
+                {testResult.models && testResult.models.length > 0 && (
+                  <div className="pl-6 text-[10px] text-emerald-300/90 font-mono">
+                    Verified key models: {testResult.models.join(', ')}
+                  </div>
                 )}
-                <span>{testResult.message}</span>
               </div>
             )}
           </div>
@@ -206,22 +233,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
                 {
-                  id: 'gemini-3.6-flash',
-                  name: 'Gemini 3.6 Flash',
+                  id: 'gemini-2.5-flash',
+                  name: 'Gemini 2.5 Flash',
                   tag: 'Recommended',
-                  desc: 'Fastest reaction analysis & live guidance',
+                  desc: 'Fastest reaction analysis & standard API key support',
+                },
+                {
+                  id: 'gemini-flash-latest',
+                  name: 'Gemini Flash Latest',
+                  tag: 'Alias',
+                  desc: 'Always resolves to the latest supported Flash model',
                 },
                 {
                   id: 'gemini-3.8-flash',
                   name: 'Gemini 3.8 Flash',
-                  tag: 'Ultra-Fast',
-                  desc: 'State-of-the-art multimodal reasoning',
-                },
-                {
-                  id: 'gemini-3.1-pro-preview',
-                  name: 'Gemini 3.1 Pro',
-                  tag: 'Advanced',
-                  desc: 'Deep multi-step chemical synthesis planning',
+                  tag: 'Next-Gen',
+                  desc: 'High-speed multimodal reasoning (auto-falls back if unavailable)',
                 },
               ].map((m) => (
                 <button

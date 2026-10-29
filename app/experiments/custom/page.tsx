@@ -13,7 +13,9 @@ export default function CustomExperimentWorkbenchPage() {
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem('chemlab_active_custom_exp');
+      const raw =
+        sessionStorage.getItem('chemlab_active_custom_exp') ||
+        localStorage.getItem('custom_ai_experiment');
       if (raw) {
         const parsed = JSON.parse(raw);
         setCustomSetup(parsed);
@@ -45,17 +47,20 @@ export default function CustomExperimentWorkbenchPage() {
     difficulty: 'intermediate',
     estimatedMinutes: 30,
     learningObjectives: [customSetup?.description || 'Custom interactive chemistry experiment simulation.'],
-    requiredEquipment: (customSetup?.initialApparatus || []).map((a) => a.type),
-    chemicals: (customSetup?.initialApparatus || []).flatMap((a) => a.activeChemicals || []),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    requiredEquipment: (customSetup?.initialApparatus || []).map((a: any) => a.type),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    chemicals: (customSetup?.initialApparatus || []).flatMap((a: any) => a.activeChemicals || []),
     principle: customSetup?.equation || 'Chemical transformation and stoichiometric reaction.',
     steps: (customSetup?.milestones || []).length > 0
-      ? customSetup!.milestones.map((m) => ({
-          index: m.step - 1,
-          title: m.title,
-          instruction: m.instruction,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? customSetup!.milestones.map((m: any, i: number) => ({
+          index: (m.step ?? i + 1) - 1,
+          title: m.title || `Step ${i + 1}`,
+          instruction: m.instruction || '',
           action: { type: 'observe' as const },
           validation: { requiredAction: 'observe' as const, errorMessage: 'Follow the step instructions.' },
-          hint: m.hintMessage || 'Review the procedure guide for guidance.',
+          hint: m.hintMessage || m.hint || 'Review the procedure guide for guidance.',
         }))
       : [
           {

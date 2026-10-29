@@ -30,11 +30,16 @@ interface GlasswareSvgProps {
   volume?: number;           // Current volume in mL
   maxVolume?: number;        // Maximum container volume in mL
   liquidColor?: string;      // CSS color of the liquid
+  precipitateColor?: string; // CSS color of settled/suspended solid precipitate
+  isGasEvolving?: boolean;   // Effervescence gas bubbles
+  isMixing?: boolean;        // Active swirling/mixing turbidity
+  isPouring?: boolean;       // Active pouring stream into vessel
+  pourColor?: string;        // CSS color of pouring stream
   temperature?: number;      // Current liquid temperature (°C)
   isHeating?: boolean;       // Burner flame active / boiling state
   stopcockOpen?: boolean;    // For burette
   hasFilterPaper?: boolean;  // For funnel
-  hasResidue?: boolean;      // For filtration
+  hasResidue?: boolean;      // For filtration / precipitate presence
   hasSaltCrust?: boolean;    // For evaporating dish
   showGraduations?: boolean;
   width?: number;
@@ -43,11 +48,31 @@ interface GlasswareSvgProps {
   onStopcockToggle?: () => void;
 }
 
+const isColorlessLiquid = (color?: string): boolean => {
+  if (!color) return true;
+  const normalized = color.trim().toLowerCase();
+  return (
+    normalized === '#e2e8f0' ||
+    normalized === '#f8fafc' ||
+    normalized === '#f1f5f9' ||
+    normalized === '#cbd5e1' ||
+    normalized === 'transparent' ||
+    normalized === 'colorless' ||
+    normalized.startsWith('rgba(226, 232, 240') ||
+    normalized.startsWith('rgba(241, 245, 249')
+  );
+};
+
 export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
   type,
   volume = 0,
   maxVolume = 250,
-  liquidColor = '#38bdf8',
+  liquidColor = '#e2e8f0',
+  precipitateColor,
+  isGasEvolving = false,
+  isMixing = false,
+  isPouring = false,
+  pourColor,
   temperature = 25,
   isHeating = false,
   stopcockOpen = false,
@@ -62,11 +87,17 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
 }) => {
   const fillFraction = Math.min(1, Math.max(0, volume / (maxVolume || 1)));
   const isBoiling = temperature >= 99.5 || (isHeating && temperature >= 95);
+  const colorless = isColorlessLiquid(liquidColor);
+  const effectivePrecipitateColor = precipitateColor || (hasResidue ? '#ffffff' : undefined);
+  const showPrecipitate = Boolean(effectivePrecipitateColor) && fillFraction > 0;
 
   // Helper: Beaker 250mL / 100mL
   if (type === 'beaker-250' || type === 'beaker-100' || type === 'beaker') {
     const liquidHeight = fillFraction * 130;
     const liquidY = 165 - liquidHeight;
+    const baseOpacity = colorless ? 0.22 : 0.78;
+    const midOpacity = colorless ? 0.30 : 0.88;
+    const meniscusOpacity = colorless ? 0.36 : 0.82;
 
     return (
       <svg
@@ -77,16 +108,16 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
       >
         <defs>
           <linearGradient id={`glass-grad-${type}`} x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.45" />
-            <stop offset="15%" stopColor="#ffffff" stopOpacity="0.12" />
-            <stop offset="85%" stopColor="#ffffff" stopOpacity="0.08" />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity="0.35" />
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.42" />
+            <stop offset="15%" stopColor="#ffffff" stopOpacity="0.10" />
+            <stop offset="85%" stopColor="#ffffff" stopOpacity="0.06" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0.34" />
           </linearGradient>
 
-          <linearGradient id={`liquid-grad-${type}`} x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor={liquidColor} stopOpacity="0.75" />
-            <stop offset="50%" stopColor={liquidColor} stopOpacity="0.9" />
-            <stop offset="100%" stopColor={liquidColor} stopOpacity="0.8" />
+          <linearGradient id={`liquid-grad-${type}-${liquidColor.replace(/[^a-zA-Z0-9]/g, '')}`} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={colorless ? '#e2e8f0' : liquidColor} stopOpacity={baseOpacity} />
+            <stop offset="55%" stopColor={colorless ? '#cbd5e1' : liquidColor} stopOpacity={midOpacity} />
+            <stop offset="100%" stopColor={colorless ? '#94a3b8' : liquidColor} stopOpacity={baseOpacity + 0.06} />
           </linearGradient>
 
           <clipPath id="beaker-clip">
@@ -97,10 +128,35 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
         {/* Back glass wall shadow */}
         <path
           d="M 28 32 L 28 165 C 28 174 36 178 50 178 L 110 178 C 124 178 132 174 132 165 L 132 32 Z"
-          fill="rgba(15, 23, 42, 0.45)"
+          fill="rgba(15, 23, 42, 0.42)"
         />
 
-        {/* Liquid Body with Meniscus */}
+        {/* Pouring Stream Entering Beaker */}
+        {isPouring && (
+          <g clipPath="url(#beaker-clip)" className="animate-pulse motion-reduce:animate-none">
+            <rect
+              x="76"
+              y="26"
+              width="7"
+              height={Math.max(20, liquidY - 22)}
+              rx="3.5"
+              fill={pourColor || liquidColor}
+              fillOpacity={isColorlessLiquid(pourColor || liquidColor) ? 0.45 : 0.85}
+            />
+            <ellipse
+              cx="79.5"
+              cy={liquidY}
+              rx="14"
+              ry="3.5"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="1.2"
+              strokeOpacity="0.75"
+            />
+          </g>
+        )}
+
+        {/* Liquid Body with Meniscus, Precipitate & Effervescence */}
         {fillFraction > 0 && (
           <g clipPath="url(#beaker-clip)">
             <rect
@@ -108,7 +164,20 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
               y={liquidY}
               width="110"
               height={liquidHeight + 20}
-              fill={`url(#liquid-grad-${type})`}
+              fill={`url(#liquid-grad-${type}-${liquidColor.replace(/[^a-zA-Z0-9]/g, '')})`}
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
+            />
+
+            {/* Subtle internal water-refraction shimmer lines for colorless/aqueous solutions */}
+            <line
+              x1="40"
+              y1={Math.min(168, liquidY + 12)}
+              x2="118"
+              y2={Math.min(168, liquidY + 12)}
+              stroke="#ffffff"
+              strokeWidth="0.8"
+              strokeOpacity={colorless ? '0.28' : '0.18'}
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
             />
 
             {/* Meniscus ellipse curve at surface */}
@@ -116,22 +185,53 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
               cx="80"
               cy={liquidY}
               rx="52"
-              ry="5"
-              fill={liquidColor}
-              fillOpacity="0.7"
+              ry={isMixing ? 6.5 : 5}
+              fill={colorless ? '#f8fafc' : liquidColor}
+              fillOpacity={meniscusOpacity}
               stroke="#ffffff"
-              strokeWidth="0.8"
-              strokeOpacity="0.5"
+              strokeWidth="1"
+              strokeOpacity={colorless ? '0.65' : '0.5'}
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
             />
 
-            {/* Boiling Bubbles Animation */}
-            {isBoiling && (
-              <g className="animate-pulse">
-                <circle cx="55" cy={liquidY + 25} r="3" fill="#ffffff" fillOpacity="0.7" />
-                <circle cx="75" cy={liquidY + 45} r="4" fill="#ffffff" fillOpacity="0.6" />
-                <circle cx="95" cy={liquidY + 18} r="2.5" fill="#ffffff" fillOpacity="0.8" />
-                <circle cx="65" cy={liquidY + 65} r="3.5" fill="#ffffff" fillOpacity="0.5" />
-                <circle cx="105" cy={liquidY + 50} r="3" fill="#ffffff" fillOpacity="0.7" />
+            {/* Settled & Suspended Precipitate Layer at Bottom of Beaker */}
+            {showPrecipitate && (
+              <g className="transition-all duration-700 ease-out motion-reduce:transition-none">
+                {/* Suspended cloudiness / turbidity near bottom */}
+                <ellipse
+                  cx="80"
+                  cy="166"
+                  rx="48"
+                  ry={isMixing ? 18 : 10}
+                  fill={effectivePrecipitateColor}
+                  fillOpacity={isMixing ? 0.55 : 0.35}
+                />
+                {/* Dense settled solid precipitate layer on beaker floor */}
+                <path
+                  d="M 29 166 Q 55 159 80 161 Q 105 159 131 166 L 132 178 L 28 178 Z"
+                  fill={effectivePrecipitateColor}
+                  fillOpacity="0.92"
+                  stroke="rgba(255,255,255,0.65)"
+                  strokeWidth="0.7"
+                />
+                {/* Fine crystalline/flocculent precipitate particles */}
+                <circle cx="48" cy={isMixing ? Math.max(liquidY + 14, 142) : 163} r="2.2" fill={effectivePrecipitateColor} fillOpacity="0.9" />
+                <circle cx="64" cy={isMixing ? Math.max(liquidY + 22, 148) : 165} r="2.8" fill={effectivePrecipitateColor} fillOpacity="0.85" />
+                <circle cx="82" cy={isMixing ? Math.max(liquidY + 12, 138) : 162} r="2.5" fill={effectivePrecipitateColor} fillOpacity="0.9" />
+                <circle cx="96" cy={isMixing ? Math.max(liquidY + 18, 146) : 164} r="2.1" fill={effectivePrecipitateColor} fillOpacity="0.85" />
+                <circle cx="112" cy={isMixing ? Math.max(liquidY + 24, 150) : 165} r="2.4" fill={effectivePrecipitateColor} fillOpacity="0.9" />
+              </g>
+            )}
+
+            {/* Boiling or Effervescent Gas Bubbles Animation */}
+            {(isBoiling || isGasEvolving) && (
+              <g className="animate-pulse motion-reduce:animate-none">
+                <circle cx="52" cy={Math.max(liquidY + 10, 152)} r="2.4" fill="#ffffff" fillOpacity="0.78" />
+                <circle cx="68" cy={Math.max(liquidY + 22, 140)} r="3.0" fill="#ffffff" fillOpacity="0.68" />
+                <circle cx="80" cy={Math.max(liquidY + 8, 128)} r="2.2" fill="#ffffff" fillOpacity="0.85" />
+                <circle cx="94" cy={Math.max(liquidY + 16, 135)} r="2.8" fill="#ffffff" fillOpacity="0.72" />
+                <circle cx="106" cy={Math.max(liquidY + 26, 146)} r="2.3" fill="#ffffff" fillOpacity="0.75" />
+                <circle cx="74" cy={Math.max(liquidY + 34, 156)} r="1.9" fill="#ffffff" fillOpacity="0.65" />
               </g>
             )}
           </g>
@@ -155,7 +255,7 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
         <path
           d="M 22 28 C 24 30 28 32 28 32 L 28 165 C 28 174 36 178 50 178 L 110 178 C 124 178 132 174 132 165 L 132 32 C 132 32 136 30 138 28"
           fill={`url(#glass-grad-${type})`}
-          stroke="rgba(255, 255, 255, 0.75)"
+          stroke="rgba(255, 255, 255, 0.78)"
           strokeWidth="1.8"
           strokeLinecap="round"
         />
@@ -192,7 +292,7 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
 
         {/* Steam Plume if Boiling or Hot */}
         {(isBoiling || temperature >= 80) && (
-          <g className="animate-pulse" opacity="0.6">
+          <g className="animate-pulse motion-reduce:animate-none" opacity="0.6">
             <path
               d="M 60 25 Q 50 12 65 2 Q 75 -6 65 -15"
               fill="none"
@@ -222,11 +322,10 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
 
   // Helper: Conical Flask (Erlenmeyer) 250mL
   if (type === 'conical-flask-250' || type === 'conical-flask' || type === 'flask') {
-    // Fill height 0 (at y=168) to 1 (at neck y=75)
     const liquidHeight = fillFraction * 95;
     const liquidY = 170 - liquidHeight;
-    // Calculate cone width at liquidY: at y=170 width is 110 (x:25 to 135), at y=75 width is 30 (x:65 to 95)
     const currentHalfWidth = 15 + ((170 - liquidY) / 95) * 40;
+    const flaskOpacity = colorless ? 0.25 : 0.82;
 
     return (
       <svg
@@ -262,8 +361,9 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
               y={liquidY}
               width="130"
               height={liquidHeight + 20}
-              fill={liquidColor}
-              fillOpacity="0.85"
+              fill={colorless ? '#e2e8f0' : liquidColor}
+              fillOpacity={flaskOpacity}
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
             />
             {/* Curved Meniscus */}
             <ellipse
@@ -271,15 +371,24 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
               cy={liquidY}
               rx={currentHalfWidth}
               ry="4"
-              fill={liquidColor}
-              fillOpacity="0.7"
+              fill={colorless ? '#f8fafc' : liquidColor}
+              fillOpacity={colorless ? 0.38 : 0.72}
               stroke="#ffffff"
               strokeWidth="0.8"
-              strokeOpacity="0.5"
+              strokeOpacity="0.55"
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
             />
-            {/* Boiling Bubbles */}
-            {isBoiling && (
-              <g className="animate-pulse">
+            {/* Settled Precipitate Layer */}
+            {showPrecipitate && (
+              <path
+                d="M 24 168 Q 80 160 136 168 L 136 178 L 24 178 Z"
+                fill={effectivePrecipitateColor}
+                fillOpacity="0.92"
+              />
+            )}
+            {/* Boiling or Effervescent Bubbles */}
+            {(isBoiling || isGasEvolving) && (
+              <g className="animate-pulse motion-reduce:animate-none">
                 <circle cx="65" cy={liquidY + 20} r="3" fill="#ffffff" fillOpacity="0.7" />
                 <circle cx="80" cy={liquidY + 35} r="3.5" fill="#ffffff" fillOpacity="0.6" />
                 <circle cx="95" cy={liquidY + 15} r="2.5" fill="#ffffff" fillOpacity="0.8" />
@@ -338,6 +447,7 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
   if (type === 'test-tube') {
     const liquidHeight = fillFraction * 130;
     const liquidY = 165 - liquidHeight;
+    const tubeOpacity = colorless ? 0.26 : 0.84;
 
     return (
       <svg
@@ -367,21 +477,34 @@ export const GlasswareSvg: React.FC<GlasswareSvgProps> = ({
               y={liquidY}
               width="30"
               height={liquidHeight + 20}
-              fill={liquidColor}
-              fillOpacity="0.85"
+              fill={colorless ? '#e2e8f0' : liquidColor}
+              fillOpacity={tubeOpacity}
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
             />
             <ellipse
               cx="80"
               cy={liquidY}
               rx="12"
               ry="3"
-              fill={liquidColor}
+              fill={colorless ? '#f8fafc' : liquidColor}
+              fillOpacity={colorless ? 0.42 : 0.85}
               stroke="#ffffff"
               strokeWidth="0.6"
-              strokeOpacity="0.5"
+              strokeOpacity="0.55"
+              className="transition-all duration-500 ease-out motion-reduce:transition-none"
             />
-            {isBoiling && (
-              <g className="animate-pulse">
+            {showPrecipitate && (
+              <ellipse
+                cx="80"
+                cy="164"
+                rx="11"
+                ry="6"
+                fill={effectivePrecipitateColor}
+                fillOpacity="0.92"
+              />
+            )}
+            {(isBoiling || isGasEvolving) && (
+              <g className="animate-pulse motion-reduce:animate-none">
                 <circle cx="76" cy={liquidY + 15} r="2" fill="#ffffff" fillOpacity="0.8" />
                 <circle cx="83" cy={liquidY + 28} r="2.5" fill="#ffffff" fillOpacity="0.7" />
                 <circle cx="78" cy={liquidY + 45} r="3" fill="#ffffff" fillOpacity="0.6" />

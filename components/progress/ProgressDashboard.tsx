@@ -47,13 +47,14 @@ export const ProgressDashboard: React.FC = () => {
     };
   });
 
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
   const handleClearProgress = () => {
-    if (confirm('Are you sure you want to reset your local laboratory progress and badges?')) {
-      localStorage.removeItem('chem_lab_progress_v1');
-      localStorage.removeItem('chem_lab_badges_v1');
-      setProgress({});
-      getEarnedBadges().then(setBadges);
-    }
+    localStorage.removeItem('chem_lab_progress_v1');
+    localStorage.removeItem('chem_lab_badges_v1');
+    setProgress({});
+    setConfirmingReset(false);
+    getEarnedBadges().then(setBadges);
   };
 
   return (
@@ -70,15 +71,36 @@ export const ProgressDashboard: React.FC = () => {
           </p>
         </div>
 
-        {completedCount > 0 && (
-          <button
-            onClick={handleClearProgress}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-rose-500/30 text-rose-300 hover:bg-rose-500/10 text-xs transition-colors self-start cursor-pointer"
-          >
-            <RotateCcwIcon className="w-3.5 h-3.5" />
-            <span>Reset Local Records</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 self-start">
+          {!confirmingReset ? (
+            <button
+              type="button"
+              onClick={() => setConfirmingReset(true)}
+              className="flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-slate-900 border border-rose-500/30 text-rose-300 hover:bg-rose-500/10 text-xs transition-colors cursor-pointer"
+            >
+              <RotateCcwIcon className="w-3.5 h-3.5" />
+              <span>Reset Local Records</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 bg-rose-950/60 border border-rose-500/40 rounded-xl px-3 py-1.5">
+              <span className="text-xs text-rose-200 font-semibold">Reset all records?</span>
+              <button
+                type="button"
+                onClick={handleClearProgress}
+                className="px-2.5 py-1 rounded-lg bg-rose-500 text-white text-xs font-bold hover:bg-rose-400 cursor-pointer"
+              >
+                Confirm Reset
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingReset(false)}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Top 4 Stat Cards */}

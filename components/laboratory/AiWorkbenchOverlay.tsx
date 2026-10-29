@@ -69,6 +69,17 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
   const [quickQuestion, setQuickQuestion] = useState<string>('');
   const [quickAnswer, setQuickAnswer] = useState<string | null>(null);
 
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 768) {
+        setActivePanel('minimized');
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Temperature history tracking for dynamic SVG curve
   const [tempHistory, setTempHistory] = useState<{ time: number; temp: number }[]>([]);
   const burnerItem = items.find((i) => i.type === 'burner');
@@ -462,10 +473,23 @@ export const AiWorkbenchOverlay: React.FC<AiWorkbenchOverlayProps> = ({
                   <div className="p-2 rounded-lg bg-emerald-950/50 border border-emerald-500/30 flex items-center justify-between gap-2">
                     <div>
                       <span className="text-[9px] text-emerald-400 font-bold uppercase block">
-                        Compound Product Formed:
+                        {aiMixingPrediction.outcome.reactionType === 'no-reaction'
+                          ? 'Aqueous Species (No Net Reaction):'
+                          : 'Compound Product Formed:'}
                       </span>
                       <span className="text-xs font-bold text-white">
-                        {aiMixingPrediction.outcome.products.map((p: any) => `${p.name} (${p.formula})`).join(' + ')}
+                        {Array.isArray(aiMixingPrediction.outcome.products) &&
+                        aiMixingPrediction.outcome.products.length > 0
+                          ? aiMixingPrediction.outcome.products
+                              .map((p: unknown) =>
+                                typeof p === 'string'
+                                  ? p
+                                  : `${(p as { name?: string }).name || ''} (${
+                                      (p as { formula?: string }).formula || ''
+                                    })`
+                              )
+                              .join(' + ')
+                          : 'Reaction not determined'}
                       </span>
                     </div>
                     {aiMixingPrediction.outcome.isPrecipitateForming && (

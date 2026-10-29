@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
 import { StockItemDefinition } from '@/components/laboratory/Stockroom';
+import {
+  resolveServerApiKey,
+  generateContentWithFallback,
+  classifyGeminiError,
+  normalizeGeminiModel,
+} from '@/lib/ai/geminiServer';
 
 // Deterministic fallback generator powered by ChemMCP chemical knowledge rules
 function generateFallbackStockItem(
@@ -141,13 +146,12 @@ function generateFallbackStockItem(
       };
     }
 
-    // Generic solution inference
     return {
       id,
       name: prompt.trim().slice(0, 32),
       category: 'solutions',
       type: 'beaker-100',
-      subtitle: `Custom Prepared Reagent (50.0 mL, pH 7.0)`,
+      subtitle: 'Custom Prepared Reagent (50.0 mL, pH 7.0)',
       volume: 50,
       maxVolume: 100,
       liquidColor: '#38bdf8',
@@ -224,34 +228,39 @@ function generateFallbackStockItem(
 }
 
 export async function POST(req: NextRequest) {
+  let body: Record<string, any> = {};
   try {
-    const body = await req.json();
-    const prompt = (body.prompt || '').trim();
-    const categoryHint = body.category as 'solutions' | 'glassware' | 'tools' | undefined;
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: 'Invalid JSON request body.' },
+      { status: 400 }
+    );
+  }
 
-    const userApiKey =
-      body.apiKey ||
-      req.headers.get('x-gemini-api-key') ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY;
-
-    let preferredModel = body.model || 'gemini-3.6-flash';
-    if (preferredModel.includes('1.5') || preferredModel.includes('2.5')) {
-      preferredModel = 'gemini-3.6-flash';
-    }
+  try {
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const categoryHint = body.category as
+      | 'solutions'
+      | 'glassware'
+      | 'tools'
+      | undefined;
 
     if (!prompt) {
       return NextResponse.json(
-        { error: 'Please specify the chemical solution, glassware, or tool to generate.' },
+        {
+          error:
+            'Please specify the chemical solution, glassware, or tool to generate.',
+        },
         { status: 400 }
       );
     }
 
-    // Try Gemini AI Generation if API key is present
-    if (userApiKey) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: userApiKey });
+    const { apiKey } = resolveServerApiKey(req, body.apiKey);
+    const requestedModel = normalizeGeminiModel(body.model);
 
+    if (apiKey) {
+      try {
         const systemPrompt = `You are an expert computational chemist and virtual lab apparatus architect.
 The user wants to generate a new laboratory item for the ChemLab Virtual Workbench Stockroom.
 User prompt: "${prompt}"
@@ -264,10 +273,10 @@ Generate a single laboratory item adhering strictly to this JSON format:
   "category": "solutions" | "glassware" | "tools",
   "type": "beaker-250" | "beaker-100" | "conical-flask-250" | "test-tube" | "cylinder-100" | "evaporating-dish" | "burette-50" | "foam-cup" | "filter-funnel" | "dropper-pipette" | "analytical-balance" | "ph-meter" | "conductivity-meter" | "burner" | "tripod" | "retort-stand" | "glass-rod" | "filter-paper" | "thermometer",
   "subtitle": "Short descriptive badge with concentration, pH, or precision details",
-  "volume": 50, // mL (only for solutions or prefilled glassware, 0 for empty glassware, omit for tools)
-  "maxVolume": 100, // mL capacity
-  "liquidColor": "#7e22ce", // Authentic realistic HEX color (e.g. purple for KMnO4, blue for CuSO4, orange for K2Cr2O7, amber for FeCl3, clear cyan for H2O #38bdf8)
-  "pH": 7.0, // Authentic aqueous pH
+  "volume": 50,
+  "maxVolume": 100,
+  "liquidColor": "#7e22ce",
+  "pH": 7.0,
   "temperature": 25.0,
   "isInsulated": false,
   "species": {
@@ -283,12 +292,14 @@ CRITICAL RULES:
 2. pH must be chemically accurate for the given acid/base/salt concentration.
 3. Return ONLY valid JSON, without markdown formatting or code blocks.`;
 
-        const response = await ai.models.generateContent({
-          model: preferredModel,
+        const { text: rawText, modelUsed } = await generateContentWithFallback({
+          apiKey,
+          preferredModel: requestedModel,
           contents: systemPrompt,
+          responseMimeType: 'application/json',
+          timeoutMs: 12000,
         });
 
-        const rawText = (response.text || '').trim();
         const cleanedJson = rawText
           .replace(/^```json\s*/i, '')
           .replace(/^```\s*/i, '')
@@ -300,7 +311,7 @@ CRITICAL RULES:
           return NextResponse.json({
             success: true,
             source: 'gemini',
-            model: preferredModel,
+            model: modelUsed,
             item: {
               ...item,
               id: item.id || `custom-${Date.now()}`,
@@ -308,8 +319,11 @@ CRITICAL RULES:
             },
           });
         }
-      } catch (geminiError: any) {
-        console.warn('Gemini stockroom item generation failed, falling back to ChemMCP engine:', geminiError?.message);
+      } catch (geminiError: unknown) {
+        const classified = classifyGeminiError(geminiError, apiKey);
+        console.warn(
+          `[generate-stockroom-item] Gemini fallback (${classified.code}): ${classified.technicalReason}`
+        );
       }
     }
 
@@ -323,9 +337,10 @@ CRITICAL RULES:
         isAiGenerated: true,
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const classified = classifyGeminiError(error);
     return NextResponse.json(
-      { error: error?.message || 'Failed to generate stockroom item.' },
+      { error: classified.userMessage || 'Failed to generate stockroom item.' },
       { status: 500 }
     );
   }

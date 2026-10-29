@@ -110,10 +110,12 @@ export default function ClassClientView({ curriculum, experiments }: ClassClient
               <span className="text-xs text-slate-400 capitalize">
                 Level: <span className="text-slate-200 font-medium">{exp.difficulty}</span>
               </span>
-              <Link href={`/classes/${exp.classId}/experiments/${exp.id}`}>
-                <CyanButton variant="primary" size="sm" icon={<PlayIcon className="w-3.5 h-3.5 ml-0.5" />}>
-                  Enter Experiment
-                </CyanButton>
+              <Link
+                href={`/classes/${exp.classId}/experiments/${exp.id}`}
+                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 min-h-[38px] text-xs font-semibold rounded-lg bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.35)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)] hover:brightness-110 active:scale-95 transition-all"
+              >
+                <PlayIcon className="w-3.5 h-3.5 ml-0.5 shrink-0" />
+                <span>Enter Experiment</span>
               </Link>
             </div>
           </div>

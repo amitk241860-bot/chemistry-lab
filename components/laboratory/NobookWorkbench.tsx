@@ -34,8 +34,11 @@ import {
   FastForwardIcon,
 } from '@/components/ui/Icons';
 import { SettingsModal } from '@/components/settings/SettingsModal';
-import type { CustomExperimentSetup } from '@/app/api/ai/analyze-experiment/route';
-import { predictReaction } from '@/lib/chemistry/chemmcpEngine';
+import {
+  predictReaction,
+  normalizeChemicalFormula,
+  COLORLESS_AQUEOUS_HEX,
+} from '@/lib/chemistry/chemmcpEngine';
 import {
   playGlassClink,
   playBurnerSound,
@@ -48,6 +51,9 @@ import {
   playCompletionFanfare,
 } from '@/lib/audio/sounds';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type CustomExperimentSetup = Record<string, any>;
+
 export interface WorkbenchItem {
   id: string;
   name: string;
@@ -59,6 +65,11 @@ export interface WorkbenchItem {
   temperature: number; // °C
   isInsulated?: boolean;
   liquidColor: string;
+  precipitateColor?: string;
+  isGasEvolving?: boolean;
+  isMixing?: boolean;
+  isPouring?: boolean;
+  pourColor?: string;
   pH: number;
   species: Record<string, number>;
   contentsName: string;
@@ -79,7 +90,13 @@ interface NobookWorkbenchProps {
 
 // Extract chemical formula from vessel name, contentsName, or species
 export function extractChemicalFormula(item: WorkbenchItem): string {
-  const text = `${item.name} ${item.contentsName} ${Object.keys(item.species).join(' ')}`.toLowerCase();
+  const combined = `${item.name} ${item.contentsName} ${Object.keys(item.species).join(' ')}`;
+  const normalized = normalizeChemicalFormula(combined);
+  if (normalized && normalized !== combined.trim()) {
+    return normalized;
+  }
+  const text = combined.toLowerCase();
+  if (text.includes('znso4') || text.includes('zinc sulfate') || text.includes('zinc sulphate')) return 'ZnSO4';
   if (text.includes('agno3') || text.includes('silver')) return 'AgNO3';
   if (text.includes('nacl') || text.includes('sodium chloride') || text.includes('salt solution')) return 'NaCl';
   if (text.includes('bacl2') || text.includes('barium')) return 'BaCl2';
@@ -93,14 +110,14 @@ export function extractChemicalFormula(item: WorkbenchItem): string {
   if (text.includes('cuso4') || text.includes('copper')) return 'CuSO4';
   if (text.includes('feso4') || text.includes('iron(ii)')) return 'FeSO4';
   if (text.includes('kmno4') || text.includes('permanganate')) return 'KMnO4';
-  if (text.includes('zn') || text.includes('zinc')) return 'Zn';
   if (text.includes('h2so4') || text.includes('sulfuric')) return 'H2SO4';
   if (text.includes('cacl2') || text.includes('calcium chloride')) return 'CaCl2';
-  if (text.includes('fe ') || text.includes('iron nail') || text.includes('iron metal')) return 'Fe';
   if (text.includes('nh4cl') || text.includes('ammonium chloride')) return 'NH4Cl';
   if (text.includes('ch3cooh') || text.includes('acetic') || text.includes('vinegar')) return 'CH3COOH';
   if (text.includes('na2co3') || text.includes('sodium carbonate')) return 'Na2CO3';
   if (text.includes('nahco3') || text.includes('bicarbonate') || text.includes('baking soda')) return 'NaHCO3';
+  if (text.includes('zn') || text.includes('zinc')) return 'Zn';
+  if (text.includes('fe ') || text.includes('iron nail') || text.includes('iron metal')) return 'Fe';
   return '';
 }
 
@@ -174,8 +191,9 @@ function getInitialSetupForExperiment(
   customSetup?: CustomExperimentSetup
 ): WorkbenchItem[] {
   if (customSetup && customSetup.initialApparatus && customSetup.initialApparatus.length > 0) {
-    return customSetup.initialApparatus.map((a) => {
-      let cleanName = a.name;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return customSetup.initialApparatus.map((a: any, idx: number) => {
+      let cleanName = a.name || a.label || `Vessel ${idx + 1}`;
       if (cleanName.includes('contains')) {
         const m = cleanName.match(/contains\s+([^)]+)/i);
         if (m && m[1]) cleanName = m[1].replace(/^\d+(\.\d+)?\s*mL\s*/i, '').trim();
@@ -203,18 +221,21 @@ function getInitialSetupForExperiment(
       }
 
       return {
-        id: a.id,
-        name: cleanName || a.name,
-        type: a.type,
-        x: a.x,
-        y: a.y,
-        volume: a.volume,
-        maxVolume: a.maxVolume,
+        id: a.id || `vessel-${idx + 1}`,
+        name: cleanName || a.name || `Vessel ${idx + 1}`,
+        type: a.type || 'beaker-250',
+        x: typeof a.x === 'number' ? a.x : 180 + idx * 170,
+        y: typeof a.y === 'number' ? a.y : 200,
+        volume: a.volume ?? 0,
+        maxVolume: a.maxVolume ?? 250,
         temperature: a.temperature || 25.0,
-        liquidColor: a.liquidColor || '#38bdf8',
-        pH: a.ph || 7.0,
-        species: (a.activeChemicals || []).reduce((acc, curr) => ({ ...acc, [curr]: 0.1 }), {}),
-        contentsName: cleanName || a.name,
+        liquidColor: a.liquidColor || COLORLESS_AQUEOUS_HEX,
+        pH: a.ph ?? a.pH ?? 7.0,
+        species: (a.activeChemicals || []).reduce(
+          (acc: Record<string, number>, curr: string) => ({ ...acc, [curr]: 0.1 }),
+          {}
+        ),
+        contentsName: cleanName || a.name || 'Reagent',
         isHeating: a.isHeating,
         hasFilterPaper: a.hasFilterPaper,
         hasResidue: a.hasResidue,
@@ -527,6 +548,20 @@ function getInitialSetupForExperiment(
   ];
 }
 
+function fitItemsToViewport(rawItems: WorkbenchItem[]): WorkbenchItem[] {
+  if (typeof window === 'undefined') return rawItems;
+  const vw = window.innerWidth;
+  if (vw >= 768) return rawItems;
+
+  // On narrow mobile screens (<768px), arrange vessels in a neat 2-column visible grid
+  const colX = [16, Math.max(165, Math.min(210, vw - 155))];
+  return rawItems.map((item, idx) => ({
+    ...item,
+    x: colX[idx % 2],
+    y: 48 + Math.floor(idx / 2) * 185,
+  }));
+}
+
 export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
   experiment,
   onExit,
@@ -538,6 +573,16 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
   const [items, setItems] = useState<WorkbenchItem[]>(() =>
     getInitialSetupForExperiment(experiment, customSetup)
   );
+
+  // Adjust item positions on mount and resize for mobile screens so no beaker is off-screen
+  useEffect(() => {
+    const handleViewportFit = () => {
+      setItems((prev) => fitItemsToViewport(prev));
+    };
+    handleViewportFit();
+    window.addEventListener('resize', handleViewportFit);
+    return () => window.removeEventListener('resize', handleViewportFit);
+  }, [experiment.id]);
 
   // Selected Vessel for Info Panel
   const [selectedId, setSelectedId] = useState<string | null>(() => {
@@ -555,11 +600,11 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // User's custom experiment flag: AI Co-Pilot is ONLY active when user makes their own experiment!
-  const isCustomExperiment = Boolean(customSetup || experiment.id === 'exp-custom');
+  // Enable AI Co-Pilot & Mix Controls across all experiments
+  const isCustomExperiment = true;
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState<boolean>(false);
 
-  // AI Auto-Done / Auto-Pilot Experiment State (Enabled for Custom Experiments)
+  // AI Auto-Done / Auto-Pilot Experiment State
   const [isAutoRunning, setIsAutoRunning] = useState<boolean>(false);
   const [autoRunSpeed, setAutoRunSpeed] = useState<number>(1);
 
@@ -812,6 +857,8 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
 
       let nextDestPH = dest.pH;
       let nextDestColor = dest.liquidColor;
+      let nextDestPrecipitateColor = dest.precipitateColor;
+      let nextDestGasEvolving = dest.isGasEvolving;
       const nextDestSpecies = { ...dest.species };
       let nextDestName = dest.name;
       let nextDestContents = dest.contentsName;
@@ -823,6 +870,8 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
         nextDestName = getCleanCompoundName(src);
         nextDestContents = src.contentsName || src.name;
         nextDestColor = src.liquidColor;
+        nextDestPrecipitateColor = src.precipitateColor;
+        nextDestGasEvolving = src.isGasEvolving;
         nextDestPH = src.pH;
         nextDestTemp = src.temperature;
         Object.assign(nextDestSpecies, src.species);
@@ -834,16 +883,52 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
 
         if (chem1 && chem2 && chem1 !== chem2) {
           const outcome = predictReaction([chem1, chem2]);
-          if (outcome.reactionType !== 'no-reaction' && outcome.products.length > 0) {
-            const primaryProduct = outcome.products[0];
-            // Update the name of the vessel to the actual chemical compound formed!
-            nextDestName = `${primaryProduct.name} (${primaryProduct.formula}${outcome.isPrecipitateForming ? '↓' : ''})`;
-            nextDestContents = outcome.products.map((p) => `${p.formula}${p.state === 's' ? '↓' : ''}`).join(' + ');
-            nextDestColor = outcome.precipitateColor || primaryProduct.color || nextDestColor;
 
-            if (outcome.isPrecipitateForming) {
-              nextDestHasResidue = true;
-            }
+          if (outcome.reactionType === 'no-reaction') {
+            nextDestName = `${chem2}(aq) + ${chem1}(aq) Mixture`;
+            nextDestContents = `${chem2}(aq) + ${chem1}(aq)`;
+            nextDestColor = outcome.solutionColor || COLORLESS_AQUEOUS_HEX;
+            nextDestPrecipitateColor = undefined;
+            nextDestHasResidue = false;
+            nextDestGasEvolving = false;
+            nextDestPH = outcome.targetPH ?? nextDestPH;
+
+            if (soundEnabled) playPouringSound();
+
+            setAiNotification({
+              title: `💧 No Net Reaction: ${outcome.equation}`,
+              message: outcome.visualObservation,
+              type: 'hint',
+            });
+
+            recordObservation('Balanced Equation', outcome.equation);
+            recordObservation('Net Ionic Equation', outcome.netIonicEquation || outcome.equation);
+            recordObservation('Visual Observation', outcome.visualObservation);
+          } else if (outcome.reactionType === 'undetermined') {
+            nextDestName = `${chem2} + ${chem1} Mixture`;
+            nextDestContents = `${chem2} + ${chem1} (Reaction not determined)`;
+            setAiNotification({
+              title: 'Reaction not determined',
+              message: outcome.visualObservation,
+              type: 'warning',
+            });
+            recordObservation('Reaction Status', 'Reaction not determined');
+          } else if (outcome.products.length > 0) {
+            const productSummary = outcome.products
+              .map((p) => `${p.name} (${p.formula}${p.state === 's' ? '↓' : ''})`)
+              .join(' + ');
+            nextDestName = outcome.precipitateName
+              ? `${outcome.precipitateName} ↓`
+              : productSummary;
+            nextDestContents = productSummary;
+            // Supernatant liquid color vs settled solid precipitate color
+            nextDestColor = outcome.solutionColor || nextDestColor;
+            nextDestPrecipitateColor = outcome.isPrecipitateForming
+              ? outcome.precipitateColor || '#ffffff'
+              : undefined;
+            nextDestHasResidue = outcome.isPrecipitateForming;
+            nextDestGasEvolving = outcome.isGasEvolving;
+
             if (outcome.targetPH !== undefined) {
               nextDestPH = outcome.targetPH;
             }
@@ -858,19 +943,23 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
               if (soundEnabled) playStepChime();
             }
 
-            // Show what will happen mixing two chemicals with a live notification banner!
             setAiNotification({
               title: `⚗️ Reaction: ${outcome.equation}`,
-              message: `${outcome.visualObservation} | Product Formed: ${outcome.products.map((p) => `${p.name} (${p.formula})`).join(' + ')}${outcome.deltaH !== 0 ? ` (ΔH = ${outcome.deltaH} kJ/mol)` : ''}`,
+              message: `${outcome.visualObservation} | Products: ${productSummary}${
+                outcome.deltaH !== 0 ? ` (ΔH = ${outcome.deltaH} kJ/mol)` : ''
+              }`,
               type: 'success',
             });
 
-            // Record in Student Observation Table
             recordObservation('Reaction Equation', outcome.equation);
+            recordObservation('Net Ionic Equation', outcome.netIonicEquation || outcome.equation);
             recordObservation('Reaction Outcome', outcome.visualObservation);
-            recordObservation('Products Formed', outcome.products.map((p) => `${p.name} (${p.formula})`).join(' + '));
+            recordObservation('Products Formed', productSummary);
             if (outcome.deltaH !== 0) {
-              recordObservation('Reaction Enthalpy (ΔH)', `${outcome.deltaH} kJ/mol (${outcome.deltaH < 0 ? 'Exothermic' : 'Endothermic'})`);
+              recordObservation(
+                'Reaction Enthalpy (ΔH)',
+                `${outcome.deltaH} kJ/mol (${outcome.deltaH < 0 ? 'Exothermic' : 'Endothermic'})`
+              );
             }
           }
         }
@@ -880,40 +969,40 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
       if (src.species['H+'] && dest.species['OH-']) {
         const hMoles = (transferredVol * src.species['H+']) / 1000;
         const ohMoles = (dest.volume * dest.species['OH-']) / 1000;
-        const totalV = (nextDestVol / 1000) || 1;
+        const totalV = nextDestVol / 1000 || 1;
 
         if (Math.abs(hMoles - ohMoles) < 1e-6) {
           nextDestPH = 7.0;
-          nextDestColor = '#38bdf8';
+          nextDestColor = dest.species['HIn'] ? '#f472b6' : COLORLESS_AQUEOUS_HEX;
           nextDestName = 'Sodium Chloride Solution (NaCl) + Water';
           nextDestContents = 'Neutralized NaCl(aq) + H₂O';
         } else if (ohMoles > hMoles) {
           const remOH = (ohMoles - hMoles) / totalV;
           nextDestPH = Number((14 + Math.log10(remOH)).toFixed(2));
-          nextDestColor = dest.species['HIn'] ? '#e11d48' : '#a5f3fc';
+          nextDestColor = dest.species['HIn'] ? '#e11d48' : COLORLESS_AQUEOUS_HEX;
         } else {
           const remH = (hMoles - ohMoles) / totalV;
           nextDestPH = Number((-Math.log10(remH)).toFixed(2));
-          nextDestColor = '#93c5fd';
+          nextDestColor = COLORLESS_AQUEOUS_HEX;
         }
       } else if (src.species['OH-'] && dest.species['H+']) {
         const ohMoles = (transferredVol * src.species['OH-']) / 1000;
         const hMoles = (dest.volume * dest.species['H+']) / 1000;
-        const totalV = (nextDestVol / 1000) || 1;
+        const totalV = nextDestVol / 1000 || 1;
 
         if (Math.abs(ohMoles - hMoles) < 1e-6) {
           nextDestPH = 7.0;
-          nextDestColor = dest.species['HIn'] ? '#f472b6' : '#38bdf8';
+          nextDestColor = dest.species['HIn'] ? '#f472b6' : COLORLESS_AQUEOUS_HEX;
           nextDestName = 'Sodium Chloride Solution (NaCl) + Water';
           nextDestContents = 'Neutralized NaCl(aq) + H₂O';
         } else if (ohMoles > hMoles) {
           const remOH = (ohMoles - hMoles) / totalV;
           nextDestPH = Number((14 + Math.log10(remOH)).toFixed(2));
-          nextDestColor = dest.species['HIn'] ? '#e11d48' : '#a5f3fc';
+          nextDestColor = dest.species['HIn'] ? '#e11d48' : COLORLESS_AQUEOUS_HEX;
         } else {
           const remH = (hMoles - ohMoles) / totalV;
           nextDestPH = Number((-Math.log10(remH)).toFixed(2));
-          nextDestColor = '#93c5fd';
+          nextDestColor = COLORLESS_AQUEOUS_HEX;
         }
       }
 
@@ -924,7 +1013,7 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
           nextDestColor = '#e11d48'; // Vibrant magenta pink
           if (soundEnabled) playStepChime();
         } else {
-          nextDestColor = '#cbd5e1'; // Colorless in acid
+          nextDestColor = COLORLESS_AQUEOUS_HEX; // Colorless in acid
         }
       }
 
@@ -980,6 +1069,8 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             name: nextSrcVol === 0 ? `Empty Beaker (${item.maxVolume || 250} mL)` : item.name,
             contentsName: nextSrcVol === 0 ? 'Empty' : item.contentsName,
             species: nextSrcVol === 0 ? {} : item.species,
+            precipitateColor: nextSrcVol === 0 ? undefined : item.precipitateColor,
+            isGasEvolving: nextSrcVol === 0 ? false : item.isGasEvolving,
           };
         }
         if (item.id === dest.id) {
@@ -990,6 +1081,8 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             volume: nextDestVol,
             pH: nextDestPH,
             liquidColor: nextDestColor,
+            precipitateColor: nextDestPrecipitateColor,
+            isGasEvolving: nextDestGasEvolving,
             species: nextDestSpecies,
             temperature: nextDestTemp,
             hasResidue: nextDestHasResidue,
@@ -1142,17 +1235,26 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
 
   // Spawn apparatus or solution from Stockroom
   const handleSpawnFromStockroom = (itemDef: StockItemDefinition) => {
+    const benchWidth = benchRef.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 900);
+    const isNarrow = benchWidth < 768;
+    const spawnX = isNarrow
+      ? Math.max(16, Math.min(benchWidth - 150, 24 + (items.length % 2) * 165))
+      : 320 + Math.random() * 200;
+    const spawnY = isNarrow
+      ? 60 + Math.floor(items.length / 2) * 160
+      : 180 + Math.random() * 80;
+
     const newItem: WorkbenchItem = {
       id: `${itemDef.type}-${Date.now().toString().slice(-4)}`,
       name: itemDef.name,
       type: itemDef.type,
-      x: 350 + Math.random() * 200,
-      y: 200 + Math.random() * 80,
+      x: spawnX,
+      y: spawnY,
       volume: itemDef.volume ?? 0,
       maxVolume: itemDef.maxVolume ?? 100,
       temperature: itemDef.temperature ?? 25.0,
       isInsulated: itemDef.isInsulated ?? false,
-      liquidColor: itemDef.liquidColor ?? '#38bdf8',
+      liquidColor: itemDef.liquidColor ?? COLORLESS_AQUEOUS_HEX,
       pH: itemDef.pH ?? 7.0,
       species: itemDef.species ? { ...itemDef.species } : {},
       contentsName: itemDef.contentsName ?? itemDef.name,
@@ -1161,14 +1263,20 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
 
     setItems((prev) => [...prev, newItem]);
     setSelectedId(newItem.id);
-    // Auto-close stockroom drawer after placing so reaction sheet remains spacious!
     setIsStockroomOpen(false);
   };
 
-  // Reset Workbench to initial experiment state
+  // Reset Workbench to initial experiment state (preserving customSetup & stopping animations)
   const handleResetWorkbench = () => {
     if (soundEnabled) playGlassClink();
-    setItems(getInitialSetupForExperiment(experiment));
+    setIsAutoRunning(false);
+    setDraggingId(null);
+    setTransferState({ isOpen: false, sourceId: null, destId: null });
+    setAiNotification(null);
+    const freshSetup = fitItemsToViewport(getInitialSetupForExperiment(experiment, customSetup));
+    setItems(freshSetup);
+    const firstLiquid = freshSetup.find((i) => i.volume > 0) || freshSetup[0];
+    setSelectedId(firstLiquid ? firstLiquid.id : null);
     setCompletedSteps([]);
     setObservations([]);
     setValidationAlert(null);
@@ -1562,6 +1670,17 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
             <span className="hidden sm:inline">Info</span>
           </button>
 
+          {/* Direct Reset Button */}
+          <button
+            type="button"
+            onClick={handleResetWorkbench}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-white/10 transition-all"
+            title="Reset Experiment Setup"
+          >
+            <RotateCcwIcon className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Reset</span>
+          </button>
+
           {/* AI Co-Pilot Header Button (Only in Custom User Experiments) */}
           {isCustomExperiment && (
             <button
@@ -1931,6 +2050,11 @@ export const NobookWorkbench: React.FC<NobookWorkbenchProps> = ({
                 volume={item.volume}
                 maxVolume={item.maxVolume}
                 liquidColor={item.liquidColor}
+                precipitateColor={item.precipitateColor}
+                isGasEvolving={item.isGasEvolving}
+                isMixing={item.isMixing}
+                isPouring={item.isPouring}
+                pourColor={item.pourColor}
                 temperature={item.temperature}
                 isHeating={item.isHeating}
                 stopcockOpen={item.stopcockOpen}

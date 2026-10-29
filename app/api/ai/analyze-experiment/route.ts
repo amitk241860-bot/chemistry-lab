@@ -1,335 +1,496 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
-import { predictReaction } from '@/lib/chemistry/chemmcpEngine';
+import { GoogleGenAI, Type } from '@google/genai';
+import {
+  predictReaction,
+  normalizeChemicalFormula,
+  getSolutionColorInfo,
+  COLORLESS_AQUEOUS_HEX,
+} from '@/lib/chemistry/chemmcpEngine';
+import {
+  resolveServerApiKey,
+  normalizeGeminiModel,
+} from '@/lib/ai/geminiServer';
 
-export interface CustomExperimentSetup {
-  id: string;
-  title: string;
-  description: string;
-  equation: string;
-  reactionType: string;
-  initialApparatus: Array<{
-    id: string;
-    name: string;
-    type: string;
-    x: number;
-    y: number;
-    volume: number;
-    maxVolume: number;
-    temperature: number;
-    liquidColor: string;
-    ph: number;
-    activeChemicals: string[];
-    isHeating?: boolean;
-    hasFilterPaper?: boolean;
-    hasResidue?: boolean;
-  }>;
-  milestones: Array<{
-    step: number;
-    title: string;
-    instruction: string;
-    requiredAction: 'pour' | 'heat' | 'mix' | 'measure' | 'observe';
-    sourceId?: string;
-    targetId?: string;
-    minVolume?: number;
-    targetTemp?: number;
-    successMessage: string;
-    hintMessage?: string;
-  }>;
-  expectedOutcomes: {
-    deltaH: number;
-    isExothermic: boolean;
-    precipitate: boolean;
-    precipitateColor?: string;
-    gasEvolution: boolean;
-    gasType?: string;
-    finalColor: string;
-    visualSummary: string;
-  };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type CustomExperimentSetup = Record<string, any>;
+
+export interface SelectedChemicalInput {
+  formula: string;
+  name?: string;
+  concentration?: string;
+  volumeML?: number;
 }
 
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const guideText = (body.guide || '').trim();
-    const userApiKey =
-      body.apiKey ||
-      req.headers.get('x-gemini-api-key') ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY;
-
-    let preferredModel = body.model || 'gemini-3.6-flash';
-    if (preferredModel.includes('1.5') || preferredModel.includes('2.5')) {
-      preferredModel = 'gemini-3.6-flash';
-    }
-
-    if (!guideText) {
-      return NextResponse.json(
-        { error: 'Please provide an experiment guide, procedure, or aim.' },
-        { status: 400 }
-      );
-    }
-
-    // Try Gemini AI Generation if API key is provided
-    if (userApiKey) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: userApiKey });
-
-        const prompt = `You are an expert computational chemist and virtual laboratory architect for ChemLab VLab.
-Analyze the following user-submitted laboratory experiment guide or procedure.
-Extract the chemical reaction, plan the initial apparatus layout on the interactive workbench, and construct sequential validation milestones.
-
-USER GUIDE / PROCEDURE:
-"""
-${guideText}
-"""
-
-RESPOND ONLY WITH VALID STRICT JSON (no markdown formatting, no code fences, no extra text) matching this JSON structure:
-{
-  "id": "exp-custom-${Date.now()}",
-  "title": "Clear experiment title",
-  "description": "Concise summary of aim and objective",
-  "equation": "Balanced chemical equation with state symbols e.g. AgNO3(aq) + NaCl(aq) -> AgCl(s) + NaNO3(aq)",
-  "reactionType": "precipitation" | "neutralization" | "complexation" | "redox" | "gas-evolution" | "thermal" | "dilution",
-  "initialApparatus": [
-    {
-      "id": "item-1",
-      "name": "0.1M Silver Nitrate (AgNO₃)",
-      "type": "beaker-250" | "beaker-100" | "conical-flask-250" | "test-tube" | "cylinder-100" | "evaporating-dish" | "burette-50" | "dropper-pipette" | "glass-rod" | "thermometer" | "burner" | "tripod",
-      "x": 160,
-      "y": 320,
-      "volume": 50,
-      "maxVolume": 250,
-      "temperature": 25.0,
-      "liquidColor": "#38bdf8",
-      "ph": 6.8,
-      "activeChemicals": ["Ag+(aq)", "NO3-(aq)"]
-    },
-    {
-      "id": "item-2",
-      "name": "0.1M Sodium Chloride (NaCl)",
-      "type": "beaker-100",
-      "x": 420,
-      "y": 320,
-      "volume": 50,
-      "maxVolume": 100,
-      "temperature": 25.0,
-      "liquidColor": "#38bdf8",
-      "ph": 7.0,
-      "activeChemicals": ["Na+(aq)", "Cl-(aq)"]
-    }
-  ],
-  "milestones": [
-    {
-      "step": 1,
-      "title": "Mix Chemical Solutions",
-      "instruction": "Transfer 0.1M Sodium Chloride (NaCl) into 0.1M Silver Nitrate (AgNO₃).",
-      "requiredAction": "pour",
-      "sourceId": "item-2",
-      "targetId": "item-1",
-      "minVolume": 20,
-      "successMessage": "Right step! Solutions mixed and reaction initiated.",
-      "hintMessage": "Use the pour dialog to transfer solutions."
-    }
-  ],
-  "expectedOutcomes": {
-    "deltaH": -25.0,
-    "isExothermic": true,
-    "precipitate": true,
-    "precipitateColor": "#ffffff",
-    "gasEvolution": false,
-    "gasType": "None",
-    "finalColor": "#ffffff",
-    "visualSummary": "Detailed observation of the reaction"
+/**
+ * Extract chemical formulas from free-form guide text or structured chemical list
+ */
+function extractFormulasFromInput(
+  guide: string,
+  chemicals?: SelectedChemicalInput[]
+): string[] {
+  if (Array.isArray(chemicals) && chemicals.length > 0) {
+    return chemicals
+      .map((c) => normalizeChemicalFormula(c.formula || c.name || '') || c.formula.trim())
+      .filter(Boolean);
   }
-}
 
-CRITICAL RULES:
-1. Ensure the x and y coordinates are nicely spaced on the canvas (x between 140 and 650, y between 150 and 380) so elements do NOT overlap!
-2. Liquid colors must be authentic hex codes (e.g. Cu2+ is '#0284c7', FeSCN2+ is '#991b1b', PbI2 is '#eab308', neutral water is '#38bdf8').
-3. Milestones must accurately reflect the steps needed to complete the experiment safely.
-4. STRICT NAME RULE: In the 'name' field, write the EXACT chemical compound name and concentration (e.g. '0.1M Silver Nitrate (AgNO₃)' or '0.1M Sodium Chloride (NaCl)'). NEVER use placeholder words like 'Reagent Beaker', 'Reaction Beaker', 'Supply Beaker', or 'Reagent 1 Container'!`;
-
-        const response = await ai.models.generateContent({
-          model: preferredModel,
-          contents: prompt,
-        });
-
-        const rawText = (response.text || '').trim();
-        // Remove markdown backticks if any
-        const cleanedJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
-        const parsed = JSON.parse(cleanedJson) as CustomExperimentSetup;
-        if (parsed.title && parsed.initialApparatus && parsed.milestones) {
-          return NextResponse.json({
-            success: true,
-            source: 'gemini-ai',
-            model: preferredModel,
-            setup: parsed,
-          });
-        }
-      } catch (aiErr: any) {
-        console.warn('Gemini AI parsing failed, falling back to local ChemMCP engine:', aiErr);
-      }
-    }
-
-    // Deterministic Local ChemMCP Rule-Based Fallback
-    const setup = generateDeterministicSetup(guideText);
-    return NextResponse.json({
-      success: true,
-      source: 'chemmcp-local-engine',
-      setup,
-    });
-  } catch (error: any) {
-    return NextResponse.json(
-      { error: error?.message || 'Failed to analyze experiment guide.' },
-      { status: 500 }
-    );
-  }
-}
-
-// Fallback generator using ChemMCP intelligence
-function generateDeterministicSetup(guide: string): CustomExperimentSetup {
   const lower = guide.toLowerCase();
+  const detected: string[] = [];
 
-  // Detect reactants
-  const reactants: string[] = [];
-  if (lower.includes('silver') || lower.includes('agno3')) reactants.push('AgNO3');
-  if (lower.includes('sodium chloride') || lower.includes('nacl')) reactants.push('NaCl');
-  if (lower.includes('barium') || lower.includes('bacl2')) reactants.push('BaCl2');
-  if (lower.includes('sulfate') || lower.includes('na2so4')) reactants.push('Na2SO4');
-  if (lower.includes('lead') || lower.includes('pb(')) reactants.push('Pb(NO3)2');
-  if (lower.includes('potassium iodide') || lower.includes('ki')) reactants.push('KI');
-  if (lower.includes('iron') || lower.includes('fecl3')) reactants.push('FeCl3');
-  if (lower.includes('thiocyanate') || lower.includes('kscn')) reactants.push('KSCN');
-  if (lower.includes('hydrochloric') || lower.includes('hcl')) reactants.push('HCl');
-  if (lower.includes('hydroxide') || lower.includes('naoh')) reactants.push('NaOH');
-  if (lower.includes('zinc') || lower.includes('zn')) reactants.push('Zn');
-
-  if (reactants.length < 2) {
-    // Default to classic double displacement if unspecified
-    reactants.push('AgNO3', 'NaCl');
-  }
-
-  const prediction = predictReaction(reactants);
-
-  // Setup apparatus based on reaction type
-  const isNeutralization = prediction.reactionType === 'neutralization';
-  const isPrecipitation = prediction.reactionType === 'precipitation';
-  const isComplexation = prediction.reactionType === 'complexation';
-
-  const compoundNames: Record<string, string> = {
-    AgNO3: 'Silver Nitrate (AgNO₃)',
-    NaCl: 'Sodium Chloride (NaCl)',
-    BaCl2: 'Barium Chloride (BaCl₂)',
-    Na2SO4: 'Sodium Sulfate (Na₂SO₄)',
-    'Pb(NO3)2': 'Lead(II) Nitrate (Pb(NO₃)₂)',
-    KI: 'Potassium Iodide (KI)',
-    FeCl3: 'Iron(III) Chloride (FeCl₃)',
-    KSCN: 'Potassium Thiocyanate (KSCN)',
-    HCl: 'Hydrochloric Acid (HCl)',
-    NaOH: 'Sodium Hydroxide (NaOH)',
-    Zn: 'Zinc Granules (Zn)',
-    CuSO4: 'Copper(II) Sulfate (CuSO₄)',
-    FeSO4: 'Iron(II) Sulfate (FeSO₄)',
-    KMnO4: 'Potassium Permanganate (KMnO₄)',
-  };
-
-  const r1Key = reactants[0] || 'AgNO3';
-  const r2Key = reactants[1] || 'NaCl';
-  const r1Display = compoundNames[r1Key] || r1Key;
-  const r2Display = compoundNames[r2Key] || r2Key;
-
-  const initialApparatus: CustomExperimentSetup['initialApparatus'] = [
-    {
-      id: 'vessel-1',
-      name: `0.1M ${r1Display}`,
-      type: 'beaker-250',
-      x: 230,
-      y: 320,
-      volume: 50,
-      maxVolume: 250,
-      temperature: 25.0,
-      liquidColor: isComplexation ? '#fef08a' : '#38bdf8',
-      ph: isNeutralization ? 1.0 : 6.8,
-      activeChemicals: [`${r1Key}(aq)`],
-    },
-    {
-      id: 'vessel-2',
-      name: `0.1M ${r2Display}`,
-      type: 'beaker-100',
-      x: 480,
-      y: 320,
-      volume: 50,
-      maxVolume: 100,
-      temperature: 25.0,
-      liquidColor: '#38bdf8',
-      ph: isNeutralization ? 13.0 : 7.0,
-      activeChemicals: [`${r2Key}(aq)`],
-    },
-    {
-      id: 'tool-rod',
-      name: 'Glass Stirring Rod',
-      type: 'glass-rod',
-      x: 350,
-      y: 200,
-      volume: 0,
-      maxVolume: 0,
-      temperature: 25.0,
-      liquidColor: 'transparent',
-      ph: 7.0,
-      activeChemicals: [],
-    },
+  const patterns: Array<{ match: RegExp; formula: string }> = [
+    { match: /\bznso4\b|zinc\s+sulfate|zinc\s+sulphate/i, formula: 'ZnSO4' },
+    { match: /\bcuso4\b|copper\(ii\)\s+sulfate|copper\s+sulfate|copper\s+sulphate/i, formula: 'CuSO4' },
+    { match: /\bfeso4\b|iron\(ii\)\s+sulfate|ferrous\s+sulfate/i, formula: 'FeSO4' },
+    { match: /\bfecl3\b|iron\(iii\)\s+chloride|ferric\s+chloride/i, formula: 'FeCl3' },
+    { match: /\bkmno4\b|potassium\s+permanganate/i, formula: 'KMnO4' },
+    { match: /\bagno3\b|silver\s+nitrate/i, formula: 'AgNO3' },
+    { match: /\bbacl2\b|barium\s+chloride/i, formula: 'BaCl2' },
+    { match: /\bna2so4\b|sodium\s+sulfate|sodium\s+sulphate/i, formula: 'Na2SO4' },
+    { match: /\bna2co3\b|sodium\s+carbonate/i, formula: 'Na2CO3' },
+    { match: /\bpb\(no3\)2\b|lead\(ii\)\s+nitrate|lead\s+nitrate/i, formula: 'Pb(NO3)2' },
+    { match: /\bkscn\b|potassium\s+thiocyanate/i, formula: 'KSCN' },
+    { match: /\bnacl\b|sodium\s+chloride|salt\s+solution/i, formula: 'NaCl' },
+    { match: /\bnaoh\b|sodium\s+hydroxide/i, formula: 'NaOH' },
+    { match: /\bhcl\b|hydrochloric\s+acid/i, formula: 'HCl' },
+    { match: /\bh2so4\b|sulfuric\s+acid|sulphuric\s+acid/i, formula: 'H2SO4' },
+    { match: /\bki\b|potassium\s+iodide/i, formula: 'KI' },
+    { match: /\bcacl2\b|calcium\s+chloride/i, formula: 'CaCl2' },
+    { match: /\bmgso4\b|magnesium\s+sulfate/i, formula: 'MgSO4' },
+    { match: /\bkno3\b|potassium\s+nitrate/i, formula: 'KNO3' },
+    { match: /\bnh4cl\b|ammonium\s+chloride/i, formula: 'NH4Cl' },
+    { match: /\bnh3\b|ammonia/i, formula: 'NH3' },
+    { match: /\bzn\b(?!\s*so4)|metallic\s+zinc|zinc\s+granules|zinc\s+metal/i, formula: 'Zn' },
   ];
 
-  const milestones: CustomExperimentSetup['milestones'] = [
+  for (const item of patterns) {
+    if (item.match.test(guide) && !detected.includes(item.formula)) {
+      detected.push(item.formula);
+    }
+  }
+
+  if (detected.length === 0 && (lower.includes('water') || lower.includes('h2o'))) {
+    detected.push('H2O');
+  }
+
+  return detected;
+}
+
+/**
+ * Deterministic ChemMCP Fallback Builder
+ * Uses verified stoichiometry and real-world solution/precipitate colors.
+ */
+function buildFallbackExperimentSetup(
+  guide: string,
+  chemicals?: SelectedChemicalInput[]
+) {
+  const formulas = extractFormulasFromInput(guide, chemicals);
+  const chemPrediction = predictReaction(formulas.length > 0 ? formulas : ['H2O']);
+
+  const structuredChemicals: SelectedChemicalInput[] =
+    Array.isArray(chemicals) && chemicals.length > 0
+      ? chemicals.map((c) => {
+          const norm = normalizeChemicalFormula(c.formula || c.name || '') || c.formula.trim();
+          return {
+            formula: norm,
+            name: c.name || getSolutionColorInfo(norm).name,
+            concentration: c.concentration || '0.1 M',
+            volumeML: Number(c.volumeML) > 0 ? Number(c.volumeML) : 50,
+          };
+        })
+      : formulas.map((formula) => {
+          const info = getSolutionColorInfo(formula);
+          return {
+            formula,
+            name: info.name,
+            concentration: '0.1 M',
+            volumeML: 50,
+          };
+        });
+
+  const initialApparatus: Array<{
+    id: string;
+    type: string;
+    name: string;
+    label: string;
+    volume: number;
+    maxVolume: number;
+    liquidColor: string;
+    pH: number;
+    temperature: number;
+    contentsName: string;
+    activeChemicals: string[];
+    chemicalFormula?: string;
+    concentration?: string;
+  }> = [];
+
+  if (structuredChemicals.length > 0) {
+    structuredChemicals.forEach((chem, index) => {
+      const colorInfo = getSolutionColorInfo(chem.formula);
+      const label = `${chem.concentration || '0.1 M'} ${chem.formula} (${chem.volumeML || 50} mL)`;
+      initialApparatus.push({
+        id: `vessel-${index + 1}`,
+        type: index === 0 ? 'beaker-250' : 'beaker-100',
+        name: label,
+        label,
+        volume: chem.volumeML || 50,
+        maxVolume: index === 0 ? 250 : 100,
+        liquidColor: colorInfo.hex,
+        pH: colorInfo.defaultPH,
+        temperature: 25,
+        contentsName: `${chem.concentration || '0.1 M'} ${chem.formula}`,
+        activeChemicals: [chem.formula],
+        chemicalFormula: chem.formula,
+        concentration: chem.concentration || '0.1 M',
+      });
+    });
+
+    if (structuredChemicals.length >= 2) {
+      initialApparatus.push({
+        id: 'vessel-receiver',
+        type: 'beaker-250',
+        name: 'Reaction Beaker (250 mL)',
+        label: 'Reaction Beaker (250 mL)',
+        volume: 0,
+        maxVolume: 250,
+        liquidColor: COLORLESS_AQUEOUS_HEX,
+        pH: 7.0,
+        temperature: 25,
+        contentsName: 'Empty',
+        activeChemicals: [],
+      });
+    }
+  } else {
+    initialApparatus.push(
+      {
+        id: 'vessel-1',
+        type: 'beaker-250',
+        name: 'Reaction Beaker (250 mL)',
+        label: 'Reaction Beaker (250 mL)',
+        volume: 50,
+        maxVolume: 250,
+        liquidColor: COLORLESS_AQUEOUS_HEX,
+        pH: 7.0,
+        temperature: 25,
+        contentsName: 'Distilled Water',
+        activeChemicals: ['H2O'],
+      },
+      {
+        id: 'vessel-2',
+        type: 'thermometer',
+        name: 'Digital Thermometer',
+        label: 'Digital Thermometer',
+        volume: 0,
+        maxVolume: 0,
+        liquidColor: '#ef4444',
+        pH: 7.0,
+        temperature: 25,
+        contentsName: 'Thermometer',
+        activeChemicals: [],
+      }
+    );
+  }
+
+  const productStrings = chemPrediction.products.map(
+    (p) => `${p.name} (${p.formula}${p.state === 's' ? '↓' : ''})`
+  );
+
+  const chemTitle =
+    structuredChemicals.length >= 2
+      ? `${structuredChemicals.map((c) => c.formula).join(' + ')} Aqueous Reaction Analysis`
+      : guide.split('\n')[0]?.slice(0, 60)?.trim() || 'Custom Virtual Chemistry Experiment';
+
+  const steps = [
     {
+      id: 1,
       step: 1,
-      title: 'Position Chemical Solutions',
-      instruction: `Inspect the 0.1M ${r1Display} and 0.1M ${r2Display} on the workbench.`,
+      title: 'Inspect Initial Reagents',
+      instruction:
+        structuredChemicals.length >= 2
+          ? `Inspect the initial reagent vessels containing ${structuredChemicals
+              .map((c) => `${c.volumeML || 50} mL of ${c.concentration || '0.1 M'} ${c.formula}`)
+              .join(' and ')}.`
+          : 'Inspect the initial reagents and apparatus placed on the laboratory workbench.',
+      hint: 'Click any vessel to inspect its initial pH, temperature, and dissolved ions.',
+      hintMessage: 'Click any vessel to inspect its initial pH, temperature, and dissolved ions.',
+      notification: `Reagents ready: ${structuredChemicals.map((c) => c.formula).join(' + ') || 'Standard aqueous setup'}.`,
+      successMessage: 'Initial reagents verified.',
       requiredAction: 'observe',
-      successMessage: 'Chemical solutions inspected! Ready for chemical reaction.',
-      hintMessage: 'Check the liquid volumes and solution properties in the info panel.',
     },
     {
+      id: 2,
       step: 2,
-      title: `Mix ${r2Display} into ${r1Display}`,
-      instruction: `Pour 25 mL of 0.1M ${r2Display} into 0.1M ${r1Display} to initiate reaction.`,
+      title: 'Mix Reagents & Observe Phase Behavior',
+      instruction:
+        structuredChemicals.length >= 2
+          ? `Click "Mix" or drag ${structuredChemicals[1].formula} onto ${structuredChemicals[0].formula} to combine the solutions in the reaction beaker.`
+          : 'Transfer the reagent into the reaction vessel or apply heat as needed.',
+      hint: 'Watch the liquid meniscus, color transition, and bottom of the beaker for any solid precipitate or gas bubbles.',
+      hintMessage: 'Watch the liquid meniscus, color transition, and bottom of the beaker.',
+      notification: chemPrediction.visualObservation,
+      successMessage: chemPrediction.visualObservation,
       requiredAction: 'pour',
-      sourceId: 'vessel-2',
-      targetId: 'vessel-1',
-      minVolume: 20,
-      successMessage: `Right step! Solutions mixed. ${prediction.visualObservation}`,
-      hintMessage: 'Drag the beaker over the receiving vessel to initiate transfer.',
     },
     {
+      id: 3,
       step: 3,
-      title: 'Stir & Measure Final State',
-      instruction: 'Observe the visual reaction outcome, color change, and final solution temperature.',
+      title: 'Verify Stoichiometry & AI Analysis',
+      instruction:
+        'Review the Experiment Results & AI Analysis panel to verify the balanced equation, net ionic equation, and spectator ions.',
+      hint: `Expected outcome: ${chemPrediction.equation}`,
+      hintMessage: `Expected outcome: ${chemPrediction.equation}`,
+      notification: chemPrediction.isReactionExpected
+        ? `Reaction verified: ${productStrings.join(', ')}`
+        : chemPrediction.isDetermined
+        ? 'No net chemical reaction occurs — ions remain dissolved in a clear solution.'
+        : 'Reaction not determined from verified rules.',
+      successMessage: 'Reaction analysis verified.',
       requiredAction: 'observe',
-      successMessage: `Reaction completed successfully! Equation: ${prediction.equation}`,
-      hintMessage: 'Review the chemical species in the Solution Info Panel.',
     },
   ];
 
   return {
     id: `exp-custom-${Date.now()}`,
-    title: prediction.reactionType !== 'no-reaction'
-      ? `Investigation of ${prediction.products.map((p) => p.name).join(' & ')} Formation`
-      : 'Custom Virtual Chemistry Experiment',
-    description: `Experimental verification of the reaction: ${prediction.equation}`,
-    equation: prediction.equation,
-    reactionType: prediction.reactionType,
+    title: chemTitle,
+    reactionType: chemPrediction.reactionType,
+    equation: chemPrediction.equation,
+    description:
+      structuredChemicals.length >= 2
+        ? `Investigate the aqueous mixing of ${structuredChemicals
+            .map((c) => `${c.concentration || '0.1 M'} ${c.formula}`)
+            .join(' and ')} and observe solution color, phase behavior, and ionic equilibria.`
+        : guide.slice(0, 200),
+    category:
+      chemPrediction.reactionType === 'no-reaction'
+        ? 'Aqueous Ion Equilibrium (No Net Reaction)'
+        : chemPrediction.reactionType === 'undetermined'
+        ? 'Exploratory Chemical Analysis'
+        : `${chemPrediction.reactionType.toUpperCase()} Reaction Practical`,
+    difficulty: 'Intermediate',
+    estimatedMinutes: 15,
+    principle: `${chemPrediction.equation} (${chemPrediction.netIonicEquation || chemPrediction.equation}) — ΔH = ${chemPrediction.deltaH} kJ/mol`,
+    objective:
+      structuredChemicals.length >= 2
+        ? `Investigate the aqueous mixing of ${structuredChemicals
+            .map((c) => `${c.concentration || '0.1 M'} ${c.formula}`)
+            .join(' and ')} and observe solution color, phase behavior, and ionic equilibria.`
+        : guide.slice(0, 200),
+    safetyNotes: chemPrediction.safetyNotes,
+    requiredEquipment: Array.from(new Set(initialApparatus.map((a) => a.type))),
+    steps,
+    milestones: steps,
     initialApparatus,
-    milestones,
     expectedOutcomes: {
-      deltaH: prediction.deltaH,
-      isExothermic: prediction.deltaH < 0,
-      precipitate: prediction.isPrecipitateForming,
-      precipitateColor: prediction.precipitateColor || '#ffffff',
-      gasEvolution: prediction.isGasEvolving,
-      gasType: prediction.gasType || 'None',
-      finalColor: prediction.products[0]?.color || '#38bdf8',
-      visualSummary: prediction.visualObservation,
+      isReactionExpected: chemPrediction.isReactionExpected,
+      isDetermined: chemPrediction.isDetermined,
+      reactionType: chemPrediction.reactionType,
+      finalColor: chemPrediction.solutionColor,
+      solutionColor: chemPrediction.solutionColor,
+      isColorless: chemPrediction.isColorless,
+      precipitate: chemPrediction.isPrecipitateForming,
+      precipitateColor: chemPrediction.precipitateColor || '',
+      precipitateName: chemPrediction.precipitateName || '',
+      gasEvolution: chemPrediction.isGasEvolving,
+      gasName: chemPrediction.gasType || '',
+      targetTempC: Number((25 + (chemPrediction.tempChangeExpected || 0)).toFixed(1)),
+      targetPH: chemPrediction.targetPH ?? 7.0,
+      balancedEquation: chemPrediction.equation,
+      netIonicEquation: chemPrediction.netIonicEquation || chemPrediction.equation,
+      reactants: structuredChemicals.map((c) => c.formula),
+      products:
+        productStrings.length > 0
+          ? productStrings
+          : chemPrediction.reactionType === 'no-reaction'
+          ? structuredChemicals.map((c) => `${c.formula}(aq, spectator ions)`)
+          : [],
+      observations: [chemPrediction.visualObservation, chemPrediction.explanation].filter(Boolean),
+      explanation: chemPrediction.explanation,
+      summaryObservation: chemPrediction.visualObservation,
+      visualSummary: chemPrediction.visualObservation,
+      safetyNotes: chemPrediction.safetyNotes,
     },
   };
+}
+
+export async function POST(req: NextRequest) {
+  let guideText = '';
+  let chemicalsInput: SelectedChemicalInput[] | undefined;
+
+  try {
+    const body = await req.json();
+    guideText = typeof body?.guide === 'string' ? body.guide.trim() : '';
+    chemicalsInput = Array.isArray(body?.chemicals) ? body.chemicals : undefined;
+
+    if (!guideText && (!chemicalsInput || chemicalsInput.length === 0)) {
+      return NextResponse.json(
+        { error: 'Please select at least one chemical or enter a laboratory experiment guide.' },
+        { status: 400 }
+      );
+    }
+
+    if (guideText.length > 10000) {
+      return NextResponse.json(
+        { error: 'Laboratory guide text exceeds maximum length (10,000 characters).' },
+        { status: 400 }
+      );
+    }
+
+    const combinedDescription =
+      guideText ||
+      (chemicalsInput || [])
+        .map((c) => `${c.volumeML || 50} mL of ${c.concentration || '0.1 M'} ${c.formula}`)
+        .join(' mixed with ');
+
+    const deterministicSetup = buildFallbackExperimentSetup(combinedDescription, chemicalsInput);
+
+    // Server-side API key resolution (never trust client keys alone)
+    const { apiKey } = resolveServerApiKey(req, body?.apiKey);
+
+    if (!apiKey) {
+      return NextResponse.json({
+        experiment: deterministicSetup,
+        warning:
+          'GEMINI_API_KEY is not configured on the server (.env.local). Generated experiment using local ChemMCP stoichiometric engine.',
+        aiSource: 'chemmcp-fallback',
+      });
+    }
+
+    const modelId = normalizeGeminiModel(body?.model);
+    const ai = new GoogleGenAI({ apiKey });
+
+    const systemPrompt = `You are an expert Chemistry Laboratory Professor and ChemMCP AI Engine.
+Analyze the user's chemical reagents and laboratory guide and return a structured JSON virtual experiment configuration.
+
+REACTANTS & VERIFIED CHEMMCP STOICHIOMETRY:
+- Reactants: ${JSON.stringify(deterministicSetup.expectedOutcomes.reactants)}
+- Verified Reaction Type: ${deterministicSetup.expectedOutcomes.reactionType}
+- Is Reaction Expected: ${deterministicSetup.expectedOutcomes.isReactionExpected}
+- Balanced Equation: ${deterministicSetup.expectedOutcomes.balancedEquation}
+- Net Ionic Equation: ${deterministicSetup.expectedOutcomes.netIonicEquation}
+- Supernatant Solution Color (Hex): ${deterministicSetup.expectedOutcomes.solutionColor} (Colorless=${deterministicSetup.expectedOutcomes.isColorless})
+- Precipitate Forming: ${deterministicSetup.expectedOutcomes.precipitate} (${deterministicSetup.expectedOutcomes.precipitateName || 'none'}, Hex=${deterministicSetup.expectedOutcomes.precipitateColor || 'none'})
+- Gas Evolution: ${deterministicSetup.expectedOutcomes.gasEvolution} (${deterministicSetup.expectedOutcomes.gasName || 'none'})
+
+CRITICAL SCIENTIFIC ACCURACY RULES:
+1. Never invent precipitates or gas bubbles when all ion combinations are soluble in water (e.g., ZnSO4 + NaCl -> No net reaction; clear, colorless solution #e2e8f0; precipitate: false; gasEvolution: false).
+2. Distinguish between dissolved solution color (finalColor / solutionColor) and solid precipitate color (precipitateColor). For example, AgNO3 + NaCl forms a white AgCl precipitate (#ffffff) in a clear, colorless supernatant solution (#e2e8f0).
+3. If a chemical combination cannot be determined with certainty, state "Reaction not determined" rather than guessing.`;
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('GEMINI_REQUEST_TIMEOUT')), 12000)
+    );
+
+    const generationPromise = ai.models.generateContent({
+      model: modelId,
+      contents: `Reagents & Guide:\n"""\n${combinedDescription}\n"""\n\nGenerate the complete virtual experiment JSON configuration.`,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            category: { type: Type.STRING },
+            difficulty: { type: Type.STRING },
+            estimatedMinutes: { type: Type.NUMBER },
+            principle: { type: Type.STRING },
+            objective: { type: Type.STRING },
+            safetyNotes: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+            expectedOutcomes: {
+              type: Type.OBJECT,
+              properties: {
+                finalColor: { type: Type.STRING },
+                precipitate: { type: Type.BOOLEAN },
+                precipitateColor: { type: Type.STRING },
+                gasEvolution: { type: Type.BOOLEAN },
+                targetTempC: { type: Type.NUMBER },
+                targetPH: { type: Type.NUMBER },
+                balancedEquation: { type: Type.STRING },
+                summaryObservation: { type: Type.STRING },
+                explanation: { type: Type.STRING },
+              },
+              required: [
+                'finalColor',
+                'precipitate',
+                'gasEvolution',
+                'targetTempC',
+                'targetPH',
+                'balancedEquation',
+                'summaryObservation',
+              ],
+            },
+          },
+          required: [
+            'title',
+            'category',
+            'principle',
+            'objective',
+            'safetyNotes',
+            'expectedOutcomes',
+          ],
+        },
+      },
+    });
+
+    const response = await Promise.race([generationPromise, timeoutPromise]);
+    const rawText = response.text || '{}';
+    const parsed = JSON.parse(rawText);
+
+    const verifiedOutcomes = deterministicSetup.expectedOutcomes;
+    const mergedOutcomes = verifiedOutcomes.isDetermined
+      ? {
+          ...verifiedOutcomes,
+          explanation: parsed.expectedOutcomes?.explanation || verifiedOutcomes.explanation,
+        }
+      : {
+          ...verifiedOutcomes,
+          ...parsed.expectedOutcomes,
+          isReactionExpected:
+            parsed.expectedOutcomes?.balancedEquation &&
+            !String(parsed.expectedOutcomes.balancedEquation).toLowerCase().includes('no reaction') &&
+            !String(parsed.expectedOutcomes.balancedEquation).toLowerCase().includes('not determined'),
+          isDetermined:
+            Boolean(parsed.expectedOutcomes?.balancedEquation) &&
+            !String(parsed.expectedOutcomes.balancedEquation).toLowerCase().includes('not determined'),
+          solutionColor: parsed.expectedOutcomes?.finalColor || verifiedOutcomes.solutionColor,
+        };
+
+    const customExperiment = {
+      ...deterministicSetup,
+      ...parsed,
+      id: `exp-custom-${Date.now()}`,
+      initialApparatus: deterministicSetup.initialApparatus,
+      steps: deterministicSetup.steps,
+      milestones: deterministicSetup.milestones,
+      expectedOutcomes: mergedOutcomes,
+    };
+
+    return NextResponse.json({
+      experiment: customExperiment,
+      aiSource: 'gemini-api',
+      modelUsed: modelId,
+    });
+  } catch (error: unknown) {
+    const errMessage = error instanceof Error ? error.message : String(error);
+    console.error('[analyze-experiment] Gemini API error:', errMessage);
+
+    if (guideText || (chemicalsInput && chemicalsInput.length > 0)) {
+      const combined =
+        guideText ||
+        (chemicalsInput || []).map((c) => `${c.concentration || '0.1 M'} ${c.formula}`).join(' + ');
+      const fallback = buildFallbackExperimentSetup(combined, chemicalsInput);
+      return NextResponse.json({
+        experiment: fallback,
+        warning: `Gemini API unavailable (${errMessage.slice(0, 120)}). Generated experiment using verified ChemMCP stoichiometry engine.`,
+        aiSource: 'chemmcp-fallback',
+      });
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to analyze experiment guide.' },
+      { status: 500 }
+    );
+  }
 }

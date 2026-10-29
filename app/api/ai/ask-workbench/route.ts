@@ -1,16 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
 import { predictReaction } from '@/lib/chemistry/chemmcpEngine';
+import {
+  resolveServerApiKey,
+  generateContentWithFallback,
+  classifyGeminiError,
+  normalizeGeminiModel,
+} from '@/lib/ai/geminiServer';
 
 export async function POST(req: NextRequest) {
+  let body: Record<string, any> = {};
   try {
-    const body = await req.json();
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { success: false, error: 'Invalid JSON request body.' },
+      { status: 400 }
+    );
+  }
+
+  try {
     const { mode, vesselA, vesselB, vessel, question, workbenchItems } = body;
-    const userApiKey =
-      body.apiKey ||
-      req.headers.get('x-gemini-api-key') ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY;
+    const { apiKey } = resolveServerApiKey(req, body.apiKey);
+    const requestedModel = normalizeGeminiModel(body.model);
 
     // --- MODE 1: PREDICT CHEMICAL MIXING ---
     if (mode === 'predict-mixing') {
@@ -20,10 +31,8 @@ export async function POST(req: NextRequest) {
       // First run local ChemMCP deterministic prediction
       const localOutcome = predictReaction([chemA, chemB]);
 
-      // If user provided Gemini API key, augment with rich AI analysis
-      if (userApiKey) {
+      if (apiKey) {
         try {
-          const ai = new GoogleGenAI({ apiKey: userApiKey });
           const prompt = `You are a virtual chemistry lab co-pilot.
 The student is performing an experiment and wants to know:
 What will happen if we mix "${chemA}" with "${chemB}"?
@@ -46,23 +55,31 @@ Return a JSON object with this exact shape:
 }
 Output only valid JSON.`;
 
-          const response = await ai.models.generateContent({
-            model: body.model || 'gemini-3.6-flash',
+          const { text, modelUsed } = await generateContentWithFallback({
+            apiKey,
+            preferredModel: requestedModel,
             contents: prompt,
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.2,
-            },
+            responseMimeType: 'application/json',
+            timeoutMs: 12000,
           });
 
-          const parsed = JSON.parse(response.text || '{}');
+          const cleaned = text
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/i, '')
+            .replace(/```$/i, '')
+            .trim();
+          const parsed = JSON.parse(cleaned || '{}');
           return NextResponse.json({
             success: true,
             source: 'gemini',
+            model: modelUsed,
             data: parsed,
           });
-        } catch (err: any) {
-          console.warn('Gemini mixing prediction fallback to local engine:', err?.message);
+        } catch (err: unknown) {
+          const classified = classifyGeminiError(err, apiKey);
+          console.warn(
+            `[ask-workbench:predict-mixing] Gemini fallback (${classified.code}): ${classified.technicalReason}`
+          );
         }
       }
 
@@ -75,7 +92,8 @@ Output only valid JSON.`;
           reactionType: localOutcome.reactionType,
           products: localOutcome.products,
           precipitate: localOutcome.isPrecipitateForming,
-          precipitateName: localOutcome.products.find((p) => p.state === 's')?.name || null,
+          precipitateName:
+            localOutcome.products.find((p) => p.state === 's')?.name || null,
           gasEvolution: localOutcome.isGasEvolving,
           gasType: localOutcome.gasType || null,
           deltaH: localOutcome.deltaH,
@@ -86,7 +104,8 @@ Output only valid JSON.`;
               ? `Endothermic: Temperature decreases by ~${localOutcome.tempChangeExpected || 2.0}°C`
               : 'Negligible temperature change (0.0°C)',
           visualObservation: localOutcome.visualObservation,
-          safetyWarning: 'Wear safety goggles and lab coat. Pour slowly down the beaker wall.',
+          safetyWarning:
+            'Wear safety goggles and lab coat. Pour slowly down the beaker wall.',
         },
       });
     }
@@ -97,9 +116,8 @@ Output only valid JSON.`;
       const contentsName = vessel?.contentsName || 'Solution';
       const currentTemp = vessel?.temperature || 25.0;
 
-      if (userApiKey) {
+      if (apiKey) {
         try {
-          const ai = new GoogleGenAI({ apiKey: userApiKey });
           const prompt = `You are an expert physical chemistry simulator co-pilot.
 A student is placing "${vesselName}" (containing "${contentsName}", current temperature: ${currentTemp}°C) over an active Bunsen burner.
 
@@ -118,37 +136,49 @@ Return a JSON object with this exact shape:
 }
 Output only valid JSON.`;
 
-          const response = await ai.models.generateContent({
-            model: body.model || 'gemini-3.6-flash',
+          const { text, modelUsed } = await generateContentWithFallback({
+            apiKey,
+            preferredModel: requestedModel,
             contents: prompt,
-            config: {
-              responseMimeType: 'application/json',
-              temperature: 0.2,
-            },
+            responseMimeType: 'application/json',
+            timeoutMs: 12000,
           });
 
-          const parsed = JSON.parse(response.text || '{}');
+          const cleaned = text
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/i, '')
+            .replace(/```$/i, '')
+            .trim();
+          const parsed = JSON.parse(cleaned || '{}');
           return NextResponse.json({
             success: true,
             source: 'gemini',
+            model: modelUsed,
             data: parsed,
           });
-        } catch (err: any) {
-          console.warn('Gemini burner prediction fallback to local engine:', err?.message);
+        } catch (err: unknown) {
+          const classified = classifyGeminiError(err, apiKey);
+          console.warn(
+            `[ask-workbench:predict-heating] Gemini fallback (${classified.code}): ${classified.technicalReason}`
+          );
         }
       }
 
       // Local Deterministic Thermal Simulation Summary
-      const isSalt = contentsName.toLowerCase().includes('salt') || contentsName.toLowerCase().includes('nacl');
+      const isSalt =
+        contentsName.toLowerCase().includes('salt') ||
+        contentsName.toLowerCase().includes('nacl');
       return NextResponse.json({
         success: true,
         source: 'chemmcp',
         data: {
           boilingPoint: isSalt ? 102.5 : 100.0,
           heatingRate: '+2.2°C per second under steady oxidizing blue flame',
-          coolingRate: '-0.6°C per second natural convective cooling towards 25.0°C',
+          coolingRate:
+            '-0.6°C per second natural convective cooling towards 25.0°C',
           thermalDecomposition: false,
-          decompositionEquation: 'H₂O(l) + Heat → H₂O(g)↑ (Physical boiling; solvent vaporization)',
+          decompositionEquation:
+            'H₂O(l) + Heat → H₂O(g)↑ (Physical boiling; solvent vaporization)',
           phaseChanges:
             '1. Temperature rises linearly from 25°C to 100°C.\n2. Vigorous bubbling and steam vapor condensation.\n3. Water volume steadily decreases as steam evolves.\n4. Dissolved solute crystallizes out as white residue.',
           solidResidue: isSalt
@@ -164,17 +194,14 @@ Output only valid JSON.`;
 
     // --- MODE 3: FREEFORM AI LAB ASSISTANT QUESTION ---
     if (mode === 'ask-question') {
-      if (!userApiKey) {
+      const q = typeof question === 'string' ? question.trim() : '';
+      if (!q) {
         return NextResponse.json(
-          {
-            success: false,
-            error: 'Google Gemini API key required for freeform questions. Add your API key in Settings (⚙️).',
-          },
+          { success: false, error: 'Please enter a chemistry question.' },
           { status: 400 }
         );
       }
 
-      const ai = new GoogleGenAI({ apiKey: userApiKey });
       const benchSummary = (workbenchItems || [])
         .map(
           (it: any) =>
@@ -182,29 +209,106 @@ Output only valid JSON.`;
         )
         .join('\n');
 
-      const prompt = `You are a helpful, expert AI Virtual Chemistry Lab Assistant.
+      if (apiKey) {
+        try {
+          const prompt = `You are a helpful, expert AI Virtual Chemistry Lab Assistant.
 The student is running a custom chemistry experiment with the following active apparatus on the workbench:
 ${benchSummary || 'No apparatus placed yet.'}
 
 The student asks:
-"${question}"
+"${q}"
 
 Provide a concise, encouraging, and accurate answer (under 150 words). Include chemical equations, temperature changes, or color changes where relevant.`;
 
-      const response = await ai.models.generateContent({
-        model: body.model || 'gemini-3.6-flash',
-        contents: prompt,
-      });
+          const { text, modelUsed } = await generateContentWithFallback({
+            apiKey,
+            preferredModel: requestedModel,
+            contents: prompt,
+            timeoutMs: 12000,
+          });
+
+          return NextResponse.json({
+            success: true,
+            source: 'gemini',
+            model: modelUsed,
+            answer: text || 'No response generated.',
+          });
+        } catch (err: unknown) {
+          const classified = classifyGeminiError(err, apiKey);
+          console.warn(
+            `[ask-workbench:ask-question] Gemini fallback (${classified.code}): ${classified.technicalReason}`
+          );
+          return NextResponse.json({
+            success: true,
+            source: 'chemmcp',
+            aiWarning: classified.userMessage,
+            answer: buildLocalTutorAnswer(q, workbenchItems || []),
+          });
+        }
+      }
 
       return NextResponse.json({
         success: true,
-        answer: response.text || 'No response generated.',
+        source: 'chemmcp',
+        answer: buildLocalTutorAnswer(q, workbenchItems || []),
       });
     }
 
-    return NextResponse.json({ success: false, error: 'Invalid mode' }, { status: 400 });
-  } catch (error: any) {
-    console.error('Ask workbench error:', error);
-    return NextResponse.json({ success: false, error: error.message || 'Server error' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: 'Invalid mode' },
+      { status: 400 }
+    );
+  } catch (error: unknown) {
+    const classified = classifyGeminiError(error);
+    return NextResponse.json(
+      { success: false, error: classified.userMessage || 'Server error' },
+      { status: 500 }
+    );
   }
+}
+
+function buildLocalTutorAnswer(question: string, workbenchItems: any[]): string {
+  const qLower = question.toLowerCase();
+  const activeReagents = workbenchItems
+    .filter((i) => i.volume > 0 || i.contentsName)
+    .map((i) => i.name || i.contentsName)
+    .filter(Boolean);
+
+  const outcome =
+    activeReagents.length >= 2
+      ? predictReaction(activeReagents)
+      : predictReaction(['AgNO3', 'NaCl']);
+
+  if (qLower.includes('precipitate') || qLower.includes('compound')) {
+    if (outcome.isPrecipitateForming) {
+      const solid = outcome.products.find((p) => p.state === 's');
+      return `[ChemMCP Local Tutor] Based on your workbench reagents (${activeReagents.join(
+        ' + '
+      )}), mixing forms an insoluble precipitate: ${
+        solid ? `${solid.name} (${solid.formula})` : 'solid precipitate'
+      }.\nEquation: ${outcome.equation}\nObservation: ${outcome.visualObservation}`;
+    }
+    return `[ChemMCP Local Tutor] For the current reagents on your bench, no insoluble precipitate forms (${outcome.equation}). ${outcome.visualObservation}`;
+  }
+
+  if (
+    qLower.includes('temp') ||
+    qLower.includes('exothermic') ||
+    qLower.includes('endothermic') ||
+    qLower.includes('heat') ||
+    qLower.includes('100')
+  ) {
+    if (qLower.includes('100') || qLower.includes('plateau') || qLower.includes('boil')) {
+      return `[ChemMCP Local Tutor] During boiling at 100°C (at 1 atm), thermal energy supplied by the Bunsen burner is absorbed as latent heat of vaporization (ΔH_vap = 40.7 kJ/mol) to convert liquid H₂O(l) into steam H₂O(g)↑ rather than raising kinetic temperature.`;
+    }
+    const thermalType =
+      outcome.deltaH < 0
+        ? `exothermic (ΔH = ${outcome.deltaH} kJ/mol, temperature rises by ~+${outcome.tempChangeExpected}°C)`
+        : outcome.deltaH > 0
+        ? `endothermic (ΔH = +${outcome.deltaH} kJ/mol, temperature drops)`
+        : 'thermally neutral (ΔH ≈ 0 kJ/mol)';
+    return `[ChemMCP Local Tutor] The reaction (${outcome.equation}) is ${thermalType}. ${outcome.visualObservation}`;
+  }
+
+  return `[ChemMCP Local Tutor] Active reaction analysis: ${outcome.equation} (${outcome.reactionType}). ${outcome.visualObservation}`;
 }

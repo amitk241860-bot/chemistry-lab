@@ -36,29 +36,37 @@ export default function HomePage() {
             Conduct realistic hands-on chemistry experiments with procedural 2D/pseudo-3D glassware, dynamic meniscuses, glowing burner flames, live species molarities ([H⁺], [OH⁻]), precise drag-to-transfer pouring, and thermochemical calorimetry.
           </p>
 
-          <div className="flex flex-wrap items-center gap-4 pt-2">
-            <Link href="/experiments/create">
-              <CyanButton variant="primary" size="lg" icon={<SparklesIcon className="w-4 h-4" />}>
-                ✨ AI Custom Experiment Studio
-              </CyanButton>
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            <Link
+              href="/experiments/create"
+              className="inline-flex items-center justify-center gap-2.5 px-6 py-3 min-h-[48px] text-sm font-semibold rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.35)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)] hover:brightness-110 active:scale-95 transition-all"
+            >
+              <SparklesIcon className="w-4 h-4 shrink-0" />
+              <span>AI Custom Experiment Studio</span>
             </Link>
 
-            <Link href="/experiments/exp-titration">
-              <CyanButton variant="secondary" size="lg" icon={<PlayIcon className="w-4 h-4" />}>
-                Acid-Base Titration Lab
-              </CyanButton>
+            <Link
+              href="/experiments/exp-titration"
+              className="inline-flex items-center justify-center gap-2.5 px-6 py-3 min-h-[48px] text-sm font-semibold rounded-xl bg-slate-900/90 text-cyan-400 border border-cyan-500/40 hover:bg-cyan-950/60 hover:border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.12)] active:scale-95 transition-all"
+            >
+              <PlayIcon className="w-4 h-4 shrink-0" />
+              <span>Acid-Base Titration Lab</span>
             </Link>
 
-            <Link href="/experiments/exp-thermochemistry">
-              <CyanButton variant="outline" size="lg" icon={<FlameIcon className="w-4 h-4" />}>
-                Camping Problem I (Calorimetry)
-              </CyanButton>
+            <Link
+              href="/experiments/exp-thermochemistry"
+              className="inline-flex items-center justify-center gap-2.5 px-5 py-3 min-h-[48px] text-sm font-semibold rounded-xl bg-transparent text-cyan-300 border border-cyan-500/50 hover:bg-cyan-500/10 hover:border-cyan-400 active:scale-95 transition-all"
+            >
+              <FlameIcon className="w-4 h-4 shrink-0" />
+              <span>Camping Problem I (Calorimetry)</span>
             </Link>
 
-            <Link href="/periodic-table">
-              <CyanButton variant="outline" size="lg" icon={<AtomIcon className="w-4 h-4" />}>
-                Periodic Table 3D
-              </CyanButton>
+            <Link
+              href="/periodic-table"
+              className="inline-flex items-center justify-center gap-2.5 px-5 py-3 min-h-[48px] text-sm font-semibold rounded-xl bg-transparent text-cyan-300 border border-cyan-500/50 hover:bg-cyan-500/10 hover:border-cyan-400 active:scale-95 transition-all"
+            >
+              <AtomIcon className="w-4 h-4 shrink-0" />
+              <span>Periodic Table 3D</span>
             </Link>
           </div>
         </div>
@@ -75,13 +83,15 @@ export default function HomePage() {
             Make Your Own Virtual Experiment
           </h2>
           <p className="text-xs md:text-sm text-slate-300 leading-relaxed">
-            Write or paste your custom laboratory guide. Google Gemini AI will interpret your chemical intent, automatically position initial reagents and glassware on the workbench, and guide your steps with real-time audio-visual notifications!
+            Select chemicals (such as ZnSO₄ + NaCl or CuSO₄ + NaOH) or paste your custom laboratory guide. Gemini AI and the ChemMCP engine analyze reactions, balance equations, and render realistic solution and precipitate colors in the beaker!
           </p>
         </div>
-        <Link href="/experiments/create" className="shrink-0">
-          <CyanButton variant="primary" size="lg" icon={<SparklesIcon className="w-4 h-4" />}>
-            Create Custom Experiment →
-          </CyanButton>
+        <Link
+          href="/experiments/create"
+          className="shrink-0 inline-flex items-center justify-center gap-2.5 px-6 py-3 min-h-[48px] text-sm font-semibold rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 shadow-[0_0_20px_rgba(34,211,238,0.35)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)] hover:brightness-110 active:scale-95 transition-all"
+        >
+          <SparklesIcon className="w-4 h-4 shrink-0" />
+          <span>Create Custom Experiment →</span>
         </Link>
       </section>
 
@@ -147,8 +157,7 @@ export default function HomePage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {CORE_EXPERIMENTS.map((exp, idx) => {
-            // Representative glassware preview type based on experiment
+          {CORE_EXPERIMENTS.map((exp) => {
             const previewType =
               exp.id === 'exp-heat-water'
                 ? 'test-tube'
@@ -169,7 +178,7 @@ export default function HomePage() {
                 ? '#e11d48'
                 : exp.id === 'exp-titration'
                 ? '#f472b6'
-                : '#38bdf8';
+                : '#e2e8f0';
 
             return (
               <div
@@ -234,12 +243,13 @@ export default function HomePage() {
 
                 {/* Card Bottom: Action Link */}
                 <div className="pt-6 border-t border-white/5 mt-4">
-                  <Link href={`/experiments/${exp.id}`} className="block">
-                    <button className="w-full py-2.5 rounded-xl bg-cyan-500/10 group-hover:bg-gradient-to-r group-hover:from-cyan-500 group-hover:to-blue-600 text-cyan-300 group-hover:text-slate-950 font-bold text-xs border border-cyan-500/30 group-hover:border-cyan-400 transition-all flex items-center justify-center gap-2 shadow-sm">
-                      <PlayIcon className="w-3.5 h-3.5" />
-                      <span>Start Experiment</span>
-                      <ChevronRightIcon className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                    </button>
+                  <Link
+                    href={`/experiments/${exp.id}`}
+                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-cyan-500/10 group-hover:bg-gradient-to-r group-hover:from-cyan-500 group-hover:to-blue-600 text-cyan-300 group-hover:text-slate-950 font-bold text-xs border border-cyan-500/30 group-hover:border-cyan-400 transition-all flex items-center justify-center gap-2 shadow-sm"
+                  >
+                    <PlayIcon className="w-3.5 h-3.5" />
+                    <span>Start Experiment</span>
+                    <ChevronRightIcon className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                   </Link>
                 </div>
               </div>

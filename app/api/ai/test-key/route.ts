@@ -1,49 +1,85 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
+import {
+  resolveServerApiKey,
+  generateContentWithFallback,
+  classifyGeminiError,
+  normalizeGeminiModel,
+  listAvailableGeminiModels,
+} from '@/lib/ai/geminiServer';
+
+/**
+ * GET /api/ai/test-key
+ * Returns whether a server-side Gemini API key (.env.local) is configured,
+ * without ever exposing the key value or prefix.
+ */
+export async function GET() {
+  const { apiKey, source } = resolveServerApiKey();
+  return NextResponse.json({
+    configured: Boolean(apiKey),
+    keySource: source,
+    defaultModel: normalizeGeminiModel(),
+  });
+}
 
 export async function POST(req: NextRequest) {
+  let body: Record<string, any> = {};
   try {
-    const body = await req.json();
-    const apiKey =
-      body.apiKey ||
-      req.headers.get('x-gemini-api-key') ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY;
+    body = await req.json();
+  } catch {
+    body = {};
+  }
 
-    if (!apiKey) {
-      return NextResponse.json(
-        { valid: false, error: 'No API key provided. Please enter your Google Gemini API key.' },
-        { status: 400 }
-      );
-    }
+  const { apiKey, source } = resolveServerApiKey(req, body.apiKey);
 
-    let modelName = body.model || 'gemini-3.6-flash';
-    if (modelName.includes('1.5') || modelName.includes('2.5')) {
-      modelName = 'gemini-3.6-flash';
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-
-    // Test a lightweight generation with Gemini 3
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: 'Ping test for ChemLab VLab. Respond with single word "Ready".',
-    });
-
-    const text = response.text || '';
-    return NextResponse.json({
-      valid: true,
-      model: modelName,
-      message: 'Google Gemini API connection successful! Chemistry engine is ready.',
-      preview: text.trim(),
-    });
-  } catch (error: any) {
+  if (!apiKey) {
     return NextResponse.json(
       {
         valid: false,
-        error: error?.message || 'Failed to authenticate with Google Gemini API. Please check your key.',
+        error:
+          'No API key found. Set GEMINI_API_KEY in .env.local on the server or provide a key to test.',
       },
-      { status: 401 }
+      { status: 400 }
+    );
+  }
+
+  const requestedModel = normalizeGeminiModel(body.model);
+
+  try {
+    const { text, modelUsed } = await generateContentWithFallback({
+      apiKey,
+      preferredModel: requestedModel,
+      contents: 'Ping test for ChemLab VLab. Respond with single word "Ready".',
+      timeoutMs: 10000,
+    });
+
+    let availableModels: string[] | undefined;
+    if (body.includeModels) {
+      try {
+        availableModels = await listAvailableGeminiModels(apiKey, 8000);
+      } catch {
+        availableModels = undefined;
+      }
+    }
+
+    return NextResponse.json({
+      valid: true,
+      keySource: source,
+      model: modelUsed,
+      availableModels,
+      message: `Google Gemini API connection successful using model "${modelUsed}" (${
+        source === 'server-env' ? 'server .env.local key' : 'provided key'
+      }).`,
+      preview: text.trim(),
+    });
+  } catch (error: unknown) {
+    const classified = classifyGeminiError(error, apiKey);
+    return NextResponse.json(
+      {
+        valid: false,
+        code: classified.code,
+        error: classified.userMessage,
+      },
+      { status: classified.httpStatus }
     );
   }
 }

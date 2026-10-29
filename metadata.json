@@ -1,0 +1,8 @@
+{
+  "name": "ChemLab VLab — Interactive Virtual Chemistry Laboratory",
+  "description": "Interactive virtual chemistry laboratory powered by procedural glassware graphics, ChemCollective stoichiometric simulation, ChemMCP chemical intelligence, and Google Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
